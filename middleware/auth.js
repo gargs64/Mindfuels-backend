@@ -3,8 +3,8 @@ const jwksRsa = require('jwks-rsa');
 
 // Auth0 Configuration from your Frontend (e.g., domain)
 const authConfig = {
-  domain: "dev-f2v3o6x7.us.auth0.com", // Found in your script.js
-  audience: "https://dev-f2v3o6x7.us.auth0.com/userinfo" // Using standard userinfo as placeholder
+  domain: "mindfuels.us.auth0.com",
+  audience: "mindfuels-api"
 };
 
 const checkJwt = jwt({
