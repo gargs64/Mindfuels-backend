@@ -6,22 +6,27 @@ const db = require('../db');
 router.get('/', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM products');
-    const products = rows.map(p => ({
-      id: p.product_id,
-      name: p.title,
-      price: parseFloat(p.sp),
-      originalPrice: parseFloat(p.mrp),
-      description: p.description,
-      stock: p.stock_qty,
-      tags: [p.tag1, p.tag2, p.tag3].filter(t => t),
-      images: [p.image1, p.image2, p.image3, p.image4, p.image5, p.image6, p.image7].filter(img => img),
-      // Set some defaults for fields not in the table yet but used in UI
-      rating: p.rating || 4.5,
-      sales: p.sales || 100,
-      subject: p.tag1,
-      interest: p.tag2,
-      ageGroup: p.tag3
-    }));
+    const products = rows.map(p => {
+      const tags = [p.tag1, p.tag2, p.tag3].filter(t => t);
+      return {
+        id: p.product_id,
+        name: p.title,
+        price: parseFloat(p.sp),
+        originalPrice: parseFloat(p.mrp),
+        description: p.description || '',
+        stock: p.stock_qty,
+        tags: tags,
+        images: [p.image1, p.image2, p.image3, p.image4, p.image5, p.image6, p.image7].filter(img => img),
+        rating: p.rating || '4.5',
+        sales: p.sales || 100,
+        length: p.length || '',
+        subject: p.tag1 || '',
+        interest: p.tag2 || '',
+        ageGroup: p.tag3 || '',
+        // Build searchTags: combine all searchable text for frontend filtering
+        searchTags: [p.title, p.description, p.tag1, p.tag2, p.tag3].filter(Boolean).join(' ').toLowerCase()
+      };
+    });
     res.json(products);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -31,14 +36,23 @@ router.get('/', async (req, res) => {
 // GET single product
 router.get('/:id', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM products WHERE id = ?', [req.params.id]);
+    const [rows] = await db.query('SELECT * FROM products WHERE product_id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ message: 'Product not found' });
     
     const p = rows[0];
-    if (typeof p.images === 'string') {
-      try { p.images = JSON.parse(p.images); } catch(e) { p.images = [p.images]; }
-    }
-    res.json(p);
+    res.json({
+      id: p.product_id,
+      name: p.title,
+      price: parseFloat(p.sp),
+      originalPrice: parseFloat(p.mrp),
+      description: p.description || '',
+      stock: p.stock_qty,
+      images: [p.image1, p.image2, p.image3, p.image4, p.image5, p.image6, p.image7].filter(img => img),
+      rating: p.rating || '4.5',
+      subject: p.tag1 || '',
+      interest: p.tag2 || '',
+      ageGroup: p.tag3 || ''
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
