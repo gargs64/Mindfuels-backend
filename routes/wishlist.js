@@ -10,19 +10,28 @@ router.use(checkJwt);
 router.post('/', async (req, res) => {
     const auth0Id = req.auth.sub;
     const { product_id } = req.body;
+    
+    console.log(`[Wishlist] Add attempt - User: ${auth0Id}, Product: ${product_id}`);
+
     try {
         const [users] = await db.query('SELECT id FROM users WHERE auth0_id = ?', [auth0Id]);
-        if (users.length === 0) return res.status(404).json({ message: 'User not found' });
+        if (users.length === 0) {
+            console.error(`[Wishlist] User not found for Auth0 ID: ${auth0Id}`);
+            return res.status(404).json({ message: 'User not found in database' });
+        }
         const userId = users[0].id;
 
+        // Using added_at as seen in the database screenshot
         await db.query(
-            'INSERT INTO wishlist (user_id, product_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE product_id = product_id',
+            'INSERT INTO wishlist (user_id, product_id, added_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE added_at = CURRENT_TIMESTAMP',
             [userId, product_id]
         );
+        
+        console.log(`[Wishlist] Successfully added ${product_id} for user ${userId}`);
         res.json({ message: 'Added to wishlist' });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Database error' });
+        console.error('[Wishlist] Database error:', err);
+        res.status(500).json({ error: 'Database error', details: err.message });
     }
 });
 
