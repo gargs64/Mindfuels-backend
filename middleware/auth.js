@@ -1,10 +1,10 @@
 const { expressjwt: jwt } = require('express-jwt');
 const jwksRsa = require('jwks-rsa');
 
-// Auth0 Configuration from your Frontend (e.g., domain)
+// Auth0 Configuration from environment variables
 const authConfig = {
-  domain: "mindfuels.us.auth0.com",
-  audience: "mindfuels-api"
+  domain: process.env.AUTH0_DOMAIN || "mindfuels.us.auth0.com",
+  audience: process.env.AUTH0_AUDIENCE || "mindfuels-api"
 };
 
 const checkJwt = jwt({

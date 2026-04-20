@@ -6,19 +6,12 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware — CORS whitelist
-const allowedOrigins = [
-  'http://localhost:5500',
-  'http://127.0.0.1:5500',
-  'http://localhost:3000',
-  'https://mindfuelspublisher.com',
-  'https://www.mindfuelspublisher.com'
-];
+const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5500,http://127.0.0.1:5500').split(',');
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, curl, etc.)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) {
+    if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
       return callback(null, true);
     }
     return callback(new Error('Not allowed by CORS'));
@@ -50,3 +43,9 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// Add with other requires at top
+const shipmentRoutes = require('./routes/shipments');
+
+// Add with other app.use lines
+app.use('/api/shipments', shipmentRoutes);
