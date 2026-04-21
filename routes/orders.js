@@ -121,7 +121,11 @@ router.get('/', async (req, res) => {
     const [orders] = await db.query(`
       SELECT o.id, o.total_amount, o.status, o.payment_status, o.created_at,
              sa.city, sa.state, sa.pincode,
-             sh.awb_code, sh.status as shipment_status
+             sh.awb_code, sh.status as shipment_status,
+             (SELECT p.image1 
+              FROM order_items oi 
+              JOIN products p ON oi.product_id = p.product_id 
+              WHERE oi.order_id = o.id LIMIT 1) as thumbnail
       FROM orders o
       JOIN shipping_address sa ON o.address_id = sa.id
       LEFT JOIN shipments sh ON sh.order_id = o.id
