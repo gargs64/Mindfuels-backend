@@ -101,7 +101,7 @@ router.post('/', async (req, res) => {
     res.json({
       success: true,
       orderId: orderId,
-      displayId: `#MF-2026-${orderId}`,
+      displayId: `#ORD-${9900 + orderId}`,
       message: 'Order placed successfully!'
     });
 
@@ -154,13 +154,15 @@ router.get('/:id', async (req, res) => {
     if (!order.length) return res.status(404).json({ message: 'Order not found' });
 
     const [items] = await db.query(`
-      SELECT oi.quantity, oi.price, p.title, p.image1
+      SELECT oi.quantity, oi.price, p.title, p.image1, p.mrp
       FROM order_items oi
       JOIN products p ON oi.product_id = p.product_id
       WHERE oi.order_id = ?
     `, [req.params.id]);
 
-    res.json({ ...order[0], items });
+    const orderData = order[0];
+    orderData.displayId = `#ORD-${9900 + orderData.id}`;
+    res.json({ ...orderData, items });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
