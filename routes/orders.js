@@ -3,13 +3,32 @@ const router = express.Router();
 const db = require('../db');
 const checkJwt = require('../middleware/auth');
 const axios = require('axios');
+const crypto = require('crypto');
 
 router.use(checkJwt);
 
 // CREATE ORDER (call this after payment verified)
 router.post('/', async (req, res) => {
   const auth0Id = req.auth.sub;
-  const { grand_total, shipping_address, razorpay_order_id } = req.body;
+  const { 
+    grand_total, 
+    shipping_address, 
+    payment_id, 
+    payment_order_id, 
+    payment_signature 
+  } = req.body;
+  
+  // Verify Payment Signature
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+  const body = payment_order_id + "|" + payment_id;
+  const expectedSignature = crypto
+    .createHmac("sha256", secret)
+    .update(body.toString())
+    .digest("hex");
+
+  if (expectedSignature !== payment_signature) {
+    return res.status(400).json({ message: "Invalid payment signature" });
+  }
 
   try {
     // 1. Get user
