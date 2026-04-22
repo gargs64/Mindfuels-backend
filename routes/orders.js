@@ -15,7 +15,8 @@ router.post('/', async (req, res) => {
     shipping_address, 
     payment_id, 
     payment_order_id, 
-    payment_signature 
+    payment_signature,
+    items: frontendItems  // Accept items from frontend to ensure accuracy
   } = req.body;
   
   // Verify Payment Signature
@@ -36,16 +37,42 @@ router.post('/', async (req, res) => {
     if (users.length === 0) return res.status(404).json({ message: 'User not found' });
     const userId = users[0].id;
 
-    // 2. Get cart items
-    const [cartItems] = await db.query(`
-      SELECT c.product_id, c.quantity, p.sp as price, p.title
-      FROM cart c
-      JOIN products p ON c.product_id = p.product_id
-      WHERE c.user_id = ?
-    `, [userId]);
+    // 2. Build order items — use frontend items (what user actually checked out)
+    //    but validate prices against the products table for security
+    let orderItems = [];
 
-    if (cartItems.length === 0) {
-      return res.status(400).json({ message: 'Cart is empty' });
+    if (frontendItems && frontendItems.length > 0) {
+      // Frontend sent the exact items the user checked out with
+      const productIds = frontendItems.map(i => i.id || i.product_id);
+      const [products] = await db.query(
+        `SELECT product_id, sp as price, title FROM products WHERE product_id IN (?)`,
+        [productIds]
+      );
+      const priceMap = {};
+      products.forEach(p => { priceMap[p.product_id] = p; });
+
+      orderItems = frontendItems.map(item => {
+        const pid = item.id || item.product_id;
+        const dbProduct = priceMap[pid];
+        return {
+          product_id: pid,
+          quantity: item.qty || item.quantity || 1,
+          price: dbProduct ? dbProduct.price : (item.price || 0)
+        };
+      }).filter(item => item.product_id);
+    } else {
+      // Fallback: read from backend cart (legacy behavior)
+      const [cartItems] = await db.query(`
+        SELECT c.product_id, c.quantity, p.sp as price, p.title
+        FROM cart c
+        JOIN products p ON c.product_id = p.product_id
+        WHERE c.user_id = ?
+      `, [userId]);
+      orderItems = cartItems;
+    }
+
+    if (orderItems.length === 0) {
+      return res.status(400).json({ message: 'No items to order' });
     }
 
     if (!shipping_address) {
@@ -62,16 +89,19 @@ router.post('/', async (req, res) => {
     );
     const addressId = addrResult.insertId;
 
-    // 4. Create order
+    // 4. Create order — recalculate total from validated items for accuracy
+    const verifiedTotal = orderItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const finalTotal = verifiedTotal || grand_total; // Use verified total, fallback to frontend total
+
     const [orderResult] = await db.query(
       `INSERT INTO orders (user_id, address_id, total_amount, status, payment_status)
        VALUES (?, ?, ?, 'Processing', 'Paid')`,
-      [userId, addressId, grand_total]
+      [userId, addressId, finalTotal]
     );
     const orderId = orderResult.insertId;
 
-    // 5. Save order items
-    const orderItemsValues = cartItems.map(item => [
+    // 5. Save order items — ONLY the items the user actually ordered
+    const orderItemsValues = orderItems.map(item => [
       orderId, item.product_id, item.quantity, item.price
     ]);
     await db.query(
@@ -79,7 +109,7 @@ router.post('/', async (req, res) => {
       [orderItemsValues]
     );
 
-    // 6. Clear cart
+    // 6. Clear cart completely
     await db.query('DELETE FROM cart WHERE user_id = ?', [userId]);
 
     // 7. Auto-create Fship shipment
