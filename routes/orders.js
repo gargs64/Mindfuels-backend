@@ -178,7 +178,7 @@ router.get('/:id', async (req, res) => {
     const [order] = await db.query(`
       SELECT o.*, sa.full_name, sa.phone, sa.address_line1,
              sa.address_line2, sa.city, sa.state, sa.pincode,
-             sh.awb_code, sh.status as shipment_status, sh.fship_order_id
+             sh.awb_code, sh.status as shipment_status, sh.fship_order_id, sh.courier_name
       FROM orders o
       JOIN shipping_address sa ON o.address_id = sa.id
       LEFT JOIN shipments sh ON sh.order_id = o.id
