@@ -94,9 +94,9 @@ router.post('/', async (req, res) => {
     const finalTotal = verifiedTotal || grand_total; // Use verified total, fallback to frontend total
 
     const [orderResult] = await db.query(
-      `INSERT INTO orders (user_id, address_id, total_amount, status, payment_status)
-       VALUES (?, ?, ?, 'Processing', 'Paid')`,
-      [userId, addressId, finalTotal]
+      `INSERT INTO orders (user_id, address_id, total_amount, status, payment_status, payment_id)
+       VALUES (?, ?, ?, 'Processing', 'Paid', ?)`,
+      [userId, addressId, finalTotal, payment_id]
     );
     const orderId = orderResult.insertId;
 
