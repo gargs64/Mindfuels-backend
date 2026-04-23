@@ -95,7 +95,9 @@ router.post('/', async (req, res) => {
     const addressId = addrResult.insertId;
 
     // 4. Create order — recalculate total from validated items for accuracy
-    const verifiedTotal = orderItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const verifiedSubtotal = orderItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const discountAmount = Math.round(verifiedSubtotal * 0.10); // 10% discount (matches frontend)
+    const verifiedTotal = verifiedSubtotal - discountAmount;
     const finalTotal = verifiedTotal || grand_total; // Use verified total, fallback to frontend total
 
     const shippingCharge = parseFloat(clientShippingCharge) || 0;
