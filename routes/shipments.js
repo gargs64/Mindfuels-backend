@@ -6,6 +6,52 @@ const axios = require('axios');
 
 const FSHIP_BASE = 'https://capi.fship.in';
 
+// ── DIAGNOSTIC (no auth required) ──────────────
+router.get('/test-fship', async (req, res) => {
+  try {
+    const testPayload = {
+      source_Pincode: process.env.FSHIP_SOURCE_PINCODE || '110034',
+      destination_Pincode: '700074',
+      payment_Mode: 'P',
+      amount: 295,
+      express_Type: 'surface',
+      shipment_Wweight: 0.5,
+      shipment_Length: 25,
+      shipment_Width: 18,
+      shipment_Hheight: 5,
+      volumetric_Wweight: 0
+    };
+
+    const response = await axios.post(
+      `${FSHIP_BASE}/api/ratecalculator`,
+      testPayload,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'signature': process.env.FSHIP_API_KEY
+        },
+        timeout: 15000
+      }
+    );
+
+    res.json({
+      fship_status: response.status,
+      fship_data: response.data,
+      api_key_present: !!process.env.FSHIP_API_KEY,
+      payload_sent: testPayload
+    });
+
+  } catch (err) {
+    res.json({
+      error: true,
+      status: err.response?.status,
+      error_data: err.response?.data || err.message,
+      api_key_present: !!process.env.FSHIP_API_KEY,
+      api_key_preview: (process.env.FSHIP_API_KEY || 'NOT SET').substring(0, 15) + '...'
+    });
+  }
+});
+
 router.use(checkJwt);
 
 // ──────────────────────────────────────────────
@@ -409,59 +455,6 @@ router.post('/estimate-rate', async (req, res) => {
       all_rates: [],
       fallback: true,
       fship_error: err.response?.data || err.message
-    });
-  }
-});
-
-// ──────────────────────────────────────────────
-// 6. DIAGNOSTIC: Test Fship API connectivity (temporary debug endpoint)
-// ──────────────────────────────────────────────
-router.get('/test-fship', async (req, res) => {
-  try {
-    const testPayload = {
-      source_Pincode: process.env.FSHIP_SOURCE_PINCODE || '110034',
-      destination_Pincode: '700074',
-      payment_Mode: 'P',
-      amount: 295,
-      express_Type: 'surface',
-      shipment_Wweight: 0.5,
-      shipment_Length: 25,
-      shipment_Width: 18,
-      shipment_Hheight: 5,
-      volumetric_Wweight: 0
-    };
-
-    console.log('[FSHIP TEST] API Key:', (process.env.FSHIP_API_KEY || 'NOT SET').substring(0, 15) + '...');
-    console.log('[FSHIP TEST] Base URL:', FSHIP_BASE);
-
-    const response = await axios.post(
-      `${FSHIP_BASE}/api/ratecalculator`,
-      testPayload,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_API_KEY
-        },
-        timeout: 15000
-      }
-    );
-
-    res.json({
-      fship_status: response.status,
-      fship_data: response.data,
-      api_key_present: !!process.env.FSHIP_API_KEY,
-      base_url: FSHIP_BASE,
-      payload_sent: testPayload
-    });
-
-  } catch (err) {
-    res.json({
-      error: true,
-      status: err.response?.status,
-      error_data: err.response?.data || err.message,
-      api_key_present: !!process.env.FSHIP_API_KEY,
-      api_key_preview: (process.env.FSHIP_API_KEY || 'NOT SET').substring(0, 15) + '...',
-      base_url: FSHIP_BASE
     });
   }
 });
