@@ -334,18 +334,19 @@ router.post('/estimate-rate', async (req, res) => {
     });
 
     const subtotal = items.reduce((sum, i) => sum + ((i.price || 0) * (i.qty || i.quantity || 1)), 0);
+    const discountedTotal = Math.round(subtotal * 0.90);
 
     const ratePayload = {
       source_Pincode: process.env.FSHIP_SOURCE_PINCODE || '110034',
       destination_Pincode: destination_pincode,
       payment_Mode: 'P',  // Prepaid
-      amount: subtotal,
+      amount: discountedTotal,
       express_Type: 'surface',
-      shipment_Weight: parseFloat(totalWeight.toFixed(2)),
+      shipment_Wweight: parseFloat(totalWeight.toFixed(2)),
       shipment_Length: parseFloat(maxLength.toFixed(2)),
       shipment_Width: parseFloat(maxWidth.toFixed(2)),
-      shipment_Height: parseFloat(totalHeight.toFixed(2)),
-      volumetric_Weight: 0
+      shipment_Hheight: parseFloat(totalHeight.toFixed(2)),
+      volumetric_Wweight: 0
     };
 
     const fshipResponse = await axios.post(
