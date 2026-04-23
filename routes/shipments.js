@@ -8,48 +8,48 @@ const FSHIP_BASE = 'https://capi.fship.in';
 
 // ── DIAGNOSTIC (no auth required) ──────────────
 router.get('/test-fship', async (req, res) => {
-  try {
-    const testPayload = {
-      source_Pincode: process.env.FSHIP_SOURCE_PINCODE || '110034',
-      destination_Pincode: '700074',
-      payment_Mode: 'P',
-      amount: 295,
-      express_Type: 'surface',
-      shipment_Wweight: 0.5,
-      shipment_Length: 25,
-      shipment_Width: 18,
-      shipment_Hheight: 5,
-      volumetric_Wweight: 0
-    };
+  const apiKey = process.env.FSHIP_API_KEY;
+  const testPayload = {
+    source_Pincode: process.env.FSHIP_SOURCE_PINCODE || '110034',
+    destination_Pincode: '700074',
+    payment_Mode: 'P',
+    amount: 295,
+    express_Type: 'surface',
+    shipment_Wweight: 0.5,
+    shipment_Length: 25,
+    shipment_Width: 18,
+    shipment_Hheight: 5,
+    volumetric_Wweight: 0
+  };
 
-    const response = await axios.post(
-      `${FSHIP_BASE}/api/ratecalculator`,
-      testPayload,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_API_KEY
-        },
-        timeout: 15000
-      }
-    );
+  const tests = [
+    { name: 'capi + signature', url: 'https://capi.fship.in/api/ratecalculator', headers: { 'signature': apiKey } },
+    { name: 'capi + signature bearer', url: 'https://capi.fship.in/api/ratecalculator', headers: { 'signature': `bearer ${apiKey}` } },
+    { name: 'capi + Authorization Bearer', url: 'https://capi.fship.in/api/ratecalculator', headers: { 'Authorization': `Bearer ${apiKey}` } },
+    { name: 'capi + token', url: 'https://capi.fship.in/api/ratecalculator', headers: { 'token': apiKey } },
+    { name: 'capi-qc + signature', url: 'https://capi-qc.fship.in/api/ratecalculator', headers: { 'signature': apiKey } },
+    { name: 'api.fship + signature', url: 'https://api.fship.in/api/ratecalculator', headers: { 'signature': apiKey } },
+  ];
 
-    res.json({
-      fship_status: response.status,
-      fship_data: response.data,
-      api_key_present: !!process.env.FSHIP_API_KEY,
-      payload_sent: testPayload
-    });
-
-  } catch (err) {
-    res.json({
-      error: true,
-      status: err.response?.status,
-      error_data: err.response?.data || err.message,
-      api_key_present: !!process.env.FSHIP_API_KEY,
-      api_key_preview: (process.env.FSHIP_API_KEY || 'NOT SET').substring(0, 15) + '...'
-    });
+  const results = [];
+  for (const test of tests) {
+    try {
+      const resp = await axios.post(test.url, testPayload, {
+        headers: { 'Content-Type': 'application/json', ...test.headers },
+        timeout: 10000
+      });
+      results.push({ name: test.name, status: resp.status, data: resp.data });
+    } catch (err) {
+      results.push({ name: test.name, status: err.response?.status || 'NETWORK_ERROR', data: err.response?.data || err.message });
+    }
   }
+
+  res.json({
+    api_key_present: !!apiKey,
+    api_key_length: (apiKey || '').length,
+    api_key_preview: (apiKey || 'NOT SET').substring(0, 15) + '...',
+    results
+  });
 });
 
 router.use(checkJwt);
