@@ -349,6 +349,10 @@ router.post('/estimate-rate', async (req, res) => {
       volumetric_Wweight: 0
     };
 
+    console.log('[FSHIP RATE] Sending payload:', JSON.stringify(ratePayload));
+    console.log('[FSHIP RATE] API Key present:', !!process.env.FSHIP_API_KEY);
+    console.log('[FSHIP RATE] API Key (first 10 chars):', (process.env.FSHIP_API_KEY || '').substring(0, 10));
+
     const fshipResponse = await axios.post(
       `${FSHIP_BASE}/api/ratecalculator`,
       ratePayload,
@@ -360,6 +364,9 @@ router.post('/estimate-rate', async (req, res) => {
         timeout: 15000
       }
     );
+
+    console.log('[FSHIP RATE] Response status:', fshipResponse.status);
+    console.log('[FSHIP RATE] Response data:', JSON.stringify(fshipResponse.data));
 
     const data = fshipResponse.data;
 
@@ -373,23 +380,26 @@ router.post('/estimate-rate', async (req, res) => {
         shipping_charge: cheapest.shipping_charge,
         courier_name: cheapest.courier_name,
         service_mode: cheapest.service_mode,
-        all_rates: data.shipment_rates
+        all_rates: data.shipment_rates,
+        fallback: false
       });
     } else {
-      // Fship didn't return rates — use a flat fallback
+      // Fship returned but no rates — log it
+      console.log('[FSHIP RATE] No rates in response, using fallback');
       res.json({
         success: true,
         shipping_charge: subtotal >= 500 ? 0 : 50,
         courier_name: 'Standard',
         service_mode: 'surface',
         all_rates: [],
-        fallback: true
+        fallback: true,
+        fship_response: data
       });
     }
 
   } catch (err) {
-    console.error('Rate estimation error:', err.response?.data || err.message);
-    // Return fallback rate so checkout isn't blocked
+    console.error('[FSHIP RATE] ERROR:', err.response?.status, err.response?.data || err.message);
+    // Return fallback rate so checkout isn't blocked — but include error info
     const subtotal = (req.body.items || []).reduce((s, i) => s + ((i.price || 0) * (i.qty || 1)), 0);
     res.json({
       success: true,
@@ -397,7 +407,61 @@ router.post('/estimate-rate', async (req, res) => {
       courier_name: 'Standard',
       service_mode: 'surface',
       all_rates: [],
-      fallback: true
+      fallback: true,
+      fship_error: err.response?.data || err.message
+    });
+  }
+});
+
+// ──────────────────────────────────────────────
+// 6. DIAGNOSTIC: Test Fship API connectivity (temporary debug endpoint)
+// ──────────────────────────────────────────────
+router.get('/test-fship', async (req, res) => {
+  try {
+    const testPayload = {
+      source_Pincode: process.env.FSHIP_SOURCE_PINCODE || '110034',
+      destination_Pincode: '700074',
+      payment_Mode: 'P',
+      amount: 295,
+      express_Type: 'surface',
+      shipment_Wweight: 0.5,
+      shipment_Length: 25,
+      shipment_Width: 18,
+      shipment_Hheight: 5,
+      volumetric_Wweight: 0
+    };
+
+    console.log('[FSHIP TEST] API Key:', (process.env.FSHIP_API_KEY || 'NOT SET').substring(0, 15) + '...');
+    console.log('[FSHIP TEST] Base URL:', FSHIP_BASE);
+
+    const response = await axios.post(
+      `${FSHIP_BASE}/api/ratecalculator`,
+      testPayload,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'signature': process.env.FSHIP_API_KEY
+        },
+        timeout: 15000
+      }
+    );
+
+    res.json({
+      fship_status: response.status,
+      fship_data: response.data,
+      api_key_present: !!process.env.FSHIP_API_KEY,
+      base_url: FSHIP_BASE,
+      payload_sent: testPayload
+    });
+
+  } catch (err) {
+    res.json({
+      error: true,
+      status: err.response?.status,
+      error_data: err.response?.data || err.message,
+      api_key_present: !!process.env.FSHIP_API_KEY,
+      api_key_preview: (process.env.FSHIP_API_KEY || 'NOT SET').substring(0, 15) + '...',
+      base_url: FSHIP_BASE
     });
   }
 });
