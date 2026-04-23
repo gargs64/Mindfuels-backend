@@ -341,11 +341,11 @@ router.post('/estimate-rate', async (req, res) => {
       payment_Mode: 'P',  // Prepaid
       amount: subtotal,
       express_Type: 'surface',
-      shipment_Wweight: parseFloat(totalWeight.toFixed(2)),
+      shipment_Weight: parseFloat(totalWeight.toFixed(2)),
       shipment_Length: parseFloat(maxLength.toFixed(2)),
       shipment_Width: parseFloat(maxWidth.toFixed(2)),
-      shipment_Hheight: parseFloat(totalHeight.toFixed(2)),
-      volumetric_Wweight: 0
+      shipment_Height: parseFloat(totalHeight.toFixed(2)),
+      volumetric_Weight: 0
     };
 
     const fshipResponse = await axios.post(
