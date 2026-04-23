@@ -30,11 +30,35 @@ router.post('/create', async (req, res) => {
 
     // 2. Get order items for product details
     const [items] = await db.query(`
-      SELECT oi.quantity, oi.price, p.title, p.product_id
+      SELECT oi.quantity, oi.price, p.title, p.product_id, oi.weight, oi.length, oi.width, oi.height
       FROM order_items oi
       JOIN products p ON oi.product_id = p.product_id
       WHERE oi.order_id = ?
     `, [order_id]);
+
+    // Calculate total shipment weight & dimensions
+    let totalWeight = 0;
+    let maxLength = 0;
+    let maxWidth = 0;
+    let totalHeight = 0;
+
+    items.forEach(item => {
+      const qty = item.quantity || 1;
+      totalWeight += (parseFloat(item.weight) || 0.5) * qty;
+      
+      const l = parseFloat(item.length) || 25;
+      const w = parseFloat(item.width) || 18;
+      const h = parseFloat(item.height) || 5;
+
+      if (l > maxLength) maxLength = l;
+      if (w > maxWidth) maxWidth = w;
+      totalHeight += h * qty; // Stack height
+    });
+
+    // Fallbacks just in case
+    if (maxLength === 0) maxLength = 25;
+    if (maxWidth === 0) maxWidth = 18;
+    if (totalHeight === 0) totalHeight = 5;
 
     // 3. Build Fship payload
     const fshipPayload = {
@@ -56,10 +80,10 @@ router.post('/create', async (req, res) => {
       extra_CHarges: 0,
       total_Amount: parseFloat(order.total_amount),
       cod_Amount: 0, // Prepaid, so no COD
-      shipment_Weight: 0.5, // Default weight for books in Kgs
-      shipment_Length: 25,   // Default dimensions in cms
-      shipment_Width: 18,
-      shipment_Height: 5,
+      shipment_Weight: parseFloat(totalWeight.toFixed(2)),
+      shipment_Length: parseFloat(maxLength.toFixed(2)),
+      shipment_Width: parseFloat(maxWidth.toFixed(2)),
+      shipment_Height: parseFloat(totalHeight.toFixed(2)),
       volumetric_Weight: 0,
       latitude: 0,
       longitude: 0,
@@ -264,6 +288,116 @@ router.post('/status', async (req, res) => {
   } catch (err) {
     console.error('Status check error:', err.response?.data || err.message);
     res.status(500).json({ error: 'Could not fetch shipment status' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// 5. ESTIMATE SHIPPING RATE (called from cart page before checkout)
+// ──────────────────────────────────────────────
+router.post('/estimate-rate', async (req, res) => {
+  const { destination_pincode, items } = req.body;
+
+  if (!destination_pincode || !items || items.length === 0) {
+    return res.status(400).json({ message: 'Pincode and items are required' });
+  }
+
+  try {
+    // Calculate total weight & dimensions from cart items
+    let totalWeight = 0;
+    let maxLength = 0;
+    let maxWidth = 0;
+    let totalHeight = 0;
+
+    // Fetch product dimensions from DB
+    const productIds = items.map(i => i.id || i.product_id);
+    const [products] = await db.query(
+      'SELECT product_id, weight, length, width, height FROM products WHERE product_id IN (?)',
+      [productIds]
+    );
+
+    const dimMap = {};
+    products.forEach(p => { dimMap[p.product_id] = p; });
+
+    items.forEach(item => {
+      const pid = item.id || item.product_id;
+      const dims = dimMap[pid];
+      const qty = item.qty || item.quantity || 1;
+
+      totalWeight += (parseFloat(dims?.weight) || 0.5) * qty;
+      const l = parseFloat(dims?.length) || 25;
+      const w = parseFloat(dims?.width) || 18;
+      const h = parseFloat(dims?.height) || 5;
+
+      if (l > maxLength) maxLength = l;
+      if (w > maxWidth) maxWidth = w;
+      totalHeight += h * qty;
+    });
+
+    const subtotal = items.reduce((sum, i) => sum + ((i.price || 0) * (i.qty || i.quantity || 1)), 0);
+
+    const ratePayload = {
+      source_Pincode: process.env.FSHIP_SOURCE_PINCODE || '110034',
+      destination_Pincode: destination_pincode,
+      payment_Mode: 'P',  // Prepaid
+      amount: subtotal,
+      express_Type: 'surface',
+      shipment_Wweight: parseFloat(totalWeight.toFixed(2)),
+      shipment_Length: parseFloat(maxLength.toFixed(2)),
+      shipment_Width: parseFloat(maxWidth.toFixed(2)),
+      shipment_Hheight: parseFloat(totalHeight.toFixed(2)),
+      volumetric_Wweight: 0
+    };
+
+    const fshipResponse = await axios.post(
+      `${FSHIP_BASE}/api/ratecalculator`,
+      ratePayload,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'signature': process.env.FSHIP_API_KEY
+        },
+        timeout: 15000
+      }
+    );
+
+    const data = fshipResponse.data;
+
+    if (data.status === true && data.shipment_rates && data.shipment_rates.length > 0) {
+      // Pick the cheapest rate
+      const cheapest = data.shipment_rates.reduce((min, r) =>
+        r.shipping_charge < min.shipping_charge ? r : min, data.shipment_rates[0]);
+
+      res.json({
+        success: true,
+        shipping_charge: cheapest.shipping_charge,
+        courier_name: cheapest.courier_name,
+        service_mode: cheapest.service_mode,
+        all_rates: data.shipment_rates
+      });
+    } else {
+      // Fship didn't return rates — use a flat fallback
+      res.json({
+        success: true,
+        shipping_charge: subtotal >= 500 ? 0 : 50,
+        courier_name: 'Standard',
+        service_mode: 'surface',
+        all_rates: [],
+        fallback: true
+      });
+    }
+
+  } catch (err) {
+    console.error('Rate estimation error:', err.response?.data || err.message);
+    // Return fallback rate so checkout isn't blocked
+    const subtotal = (req.body.items || []).reduce((s, i) => s + ((i.price || 0) * (i.qty || 1)), 0);
+    res.json({
+      success: true,
+      shipping_charge: subtotal >= 500 ? 0 : 50,
+      courier_name: 'Standard',
+      service_mode: 'surface',
+      all_rates: [],
+      fallback: true
+    });
   }
 });
 

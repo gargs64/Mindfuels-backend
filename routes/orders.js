@@ -12,6 +12,7 @@ router.post('/', async (req, res) => {
   const auth0Id = req.auth.sub;
   const { 
     grand_total, 
+    shipping_charge: clientShippingCharge,
     shipping_address, 
     payment_id, 
     payment_order_id, 
@@ -45,7 +46,7 @@ router.post('/', async (req, res) => {
       // Frontend sent the exact items the user checked out with
       const productIds = frontendItems.map(i => i.id || i.product_id);
       const [products] = await db.query(
-        `SELECT product_id, sp as price, title FROM products WHERE product_id IN (?)`,
+        `SELECT product_id, sp as price, title, weight, length, width, height FROM products WHERE product_id IN (?)`,
         [productIds]
       );
       const priceMap = {};
@@ -57,13 +58,17 @@ router.post('/', async (req, res) => {
         return {
           product_id: pid,
           quantity: item.qty || item.quantity || 1,
-          price: dbProduct ? dbProduct.price : (item.price || 0)
+          price: dbProduct ? dbProduct.price : (item.price || 0),
+          weight: dbProduct ? dbProduct.weight : 0.50,
+          length: dbProduct ? dbProduct.length : 25.00,
+          width: dbProduct ? dbProduct.width : 18.00,
+          height: dbProduct ? dbProduct.height : 5.00
         };
       }).filter(item => item.product_id);
     } else {
       // Fallback: read from backend cart (legacy behavior)
       const [cartItems] = await db.query(`
-        SELECT c.product_id, c.quantity, p.sp as price, p.title
+        SELECT c.product_id, c.quantity, p.sp as price, p.title, p.weight, p.length, p.width, p.height
         FROM cart c
         JOIN products p ON c.product_id = p.product_id
         WHERE c.user_id = ?
@@ -93,19 +98,22 @@ router.post('/', async (req, res) => {
     const verifiedTotal = orderItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
     const finalTotal = verifiedTotal || grand_total; // Use verified total, fallback to frontend total
 
+    const shippingCharge = parseFloat(clientShippingCharge) || 0;
+    const grandTotal = finalTotal + shippingCharge;
+
     const [orderResult] = await db.query(
-      `INSERT INTO orders (user_id, address_id, total_amount, status, payment_status, payment_id)
-       VALUES (?, ?, ?, 'Processing', 'Paid', ?)`,
-      [userId, addressId, finalTotal, payment_id]
+      `INSERT INTO orders (user_id, address_id, total_amount, shipping_charge, status, payment_status, payment_id)
+       VALUES (?, ?, ?, ?, 'Processing', 'Paid', ?)`,
+      [userId, addressId, grandTotal, shippingCharge, payment_id]
     );
     const orderId = orderResult.insertId;
 
     // 5. Save order items — ONLY the items the user actually ordered
     const orderItemsValues = orderItems.map(item => [
-      orderId, item.product_id, item.quantity, item.price
+      orderId, item.product_id, item.quantity, item.price, item.weight, item.length, item.width, item.height
     ]);
     await db.query(
-      'INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?',
+      'INSERT INTO order_items (order_id, product_id, quantity, price, weight, length, width, height) VALUES ?',
       [orderItemsValues]
     );
 
@@ -149,9 +157,9 @@ router.get('/', async (req, res) => {
     if (users.length === 0) return res.status(404).json({ message: 'User not found' });
 
     const [orders] = await db.query(`
-      SELECT o.id, o.total_amount, o.status, o.payment_status, o.created_at,
+      SELECT o.id, o.total_amount, o.shipping_charge, o.status, o.payment_status, o.created_at,
              sa.city, sa.state, sa.pincode,
-             sh.awb_code, sh.status as shipment_status,
+             sh.awb_code, sh.courier_name, sh.status as shipment_status,
              (SELECT p.image1 
               FROM order_items oi 
               JOIN products p ON oi.product_id = p.product_id 
@@ -178,7 +186,8 @@ router.get('/:id', async (req, res) => {
     const [order] = await db.query(`
       SELECT o.*, sa.full_name, sa.phone, sa.address_line1,
              sa.address_line2, sa.city, sa.state, sa.pincode,
-             sh.awb_code, sh.status as shipment_status, sh.fship_order_id, sh.courier_name
+             sh.awb_code, sh.status as shipment_status, sh.fship_order_id, 
+             sh.courier_name, sh.tracking_url, sh.shipped_at, sh.delivered_at
       FROM orders o
       JOIN shipping_address sa ON o.address_id = sa.id
       LEFT JOIN shipments sh ON sh.order_id = o.id
