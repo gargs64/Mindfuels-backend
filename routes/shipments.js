@@ -340,6 +340,54 @@ router.post('/status', async (req, res) => {
 // ──────────────────────────────────────────────
 // 5. ESTIMATE SHIPPING RATE (called from cart page before checkout)
 // ──────────────────────────────────────────────
+
+// Realistic fallback shipping calculator (used when Fship API is unavailable)
+function calculateFallbackShipping(sourcePincode, destPincode, weightKg) {
+  // Determine zone based on first 3 digits of pincode (India postal zones)
+  const srcZone = sourcePincode.substring(0, 3);
+  const dstZone = destPincode.substring(0, 3);
+  const srcRegion = sourcePincode.substring(0, 1);
+  const dstRegion = destPincode.substring(0, 1);
+
+  let zone; // local, regional, national, remote
+  if (srcZone === dstZone) {
+    zone = 'local';       // Same area (e.g., within Delhi)
+  } else if (srcRegion === dstRegion) {
+    zone = 'regional';    // Same region (e.g., North India)
+  } else if (['1', '2', '3', '4', '5'].includes(dstRegion)) {
+    zone = 'national';    // Metro/major regions
+  } else {
+    zone = 'remote';      // NE India, J&K, remote areas
+  }
+
+  // Base rates per zone (for first 0.5 kg)
+  const baseRates = {
+    local: 35,
+    regional: 50,
+    national: 65,
+    remote: 85
+  };
+
+  // Additional charge per 0.5 kg
+  const additionalPer500g = {
+    local: 15,
+    regional: 20,
+    national: 25,
+    remote: 35
+  };
+
+  const base = baseRates[zone];
+  const extra = Math.max(0, Math.ceil((weightKg - 0.5) / 0.5)) * additionalPer500g[zone];
+  const shipping = base + extra;
+
+  return {
+    shipping_charge: shipping,
+    courier_name: 'Standard Delivery',
+    service_mode: 'surface',
+    zone: zone
+  };
+}
+
 router.post('/estimate-rate', async (req, res) => {
   const { destination_pincode, items } = req.body;
 
@@ -381,11 +429,13 @@ router.post('/estimate-rate', async (req, res) => {
 
     const subtotal = items.reduce((sum, i) => sum + ((i.price || 0) * (i.qty || i.quantity || 1)), 0);
     const discountedTotal = Math.round(subtotal * 0.90);
+    const sourcePincode = process.env.FSHIP_SOURCE_PINCODE || '110034';
 
+    // Try Fship API first
     const ratePayload = {
-      source_Pincode: process.env.FSHIP_SOURCE_PINCODE || '110034',
+      source_Pincode: sourcePincode,
       destination_Pincode: destination_pincode,
-      payment_Mode: 'P',  // Prepaid
+      payment_Mode: 'P',
       amount: discountedTotal,
       express_Type: 'surface',
       shipment_Wweight: parseFloat(totalWeight.toFixed(2)),
@@ -395,9 +445,7 @@ router.post('/estimate-rate', async (req, res) => {
       volumetric_Wweight: 0
     };
 
-    console.log('[FSHIP RATE] Sending payload:', JSON.stringify(ratePayload));
-    console.log('[FSHIP RATE] API Key present:', !!process.env.FSHIP_API_KEY);
-    console.log('[FSHIP RATE] API Key (first 10 chars):', (process.env.FSHIP_API_KEY || '').substring(0, 10));
+    console.log('[FSHIP RATE] Trying Fship API...');
 
     const fshipResponse = await axios.post(
       `${FSHIP_BASE}/api/ratecalculator`,
@@ -407,21 +455,18 @@ router.post('/estimate-rate', async (req, res) => {
           'Content-Type': 'application/json',
           'signature': process.env.FSHIP_API_KEY
         },
-        timeout: 15000
+        timeout: 10000
       }
     );
-
-    console.log('[FSHIP RATE] Response status:', fshipResponse.status);
-    console.log('[FSHIP RATE] Response data:', JSON.stringify(fshipResponse.data));
 
     const data = fshipResponse.data;
 
     if (data.status === true && data.shipment_rates && data.shipment_rates.length > 0) {
-      // Pick the cheapest rate
+      console.log('[FSHIP RATE] Got rates from Fship!');
       const cheapest = data.shipment_rates.reduce((min, r) =>
         r.shipping_charge < min.shipping_charge ? r : min, data.shipment_rates[0]);
 
-      res.json({
+      return res.json({
         success: true,
         shipping_charge: cheapest.shipping_charge,
         courier_name: cheapest.courier_name,
@@ -429,32 +474,34 @@ router.post('/estimate-rate', async (req, res) => {
         all_rates: data.shipment_rates,
         fallback: false
       });
-    } else {
-      // Fship returned but no rates — log it
-      console.log('[FSHIP RATE] No rates in response, using fallback');
-      res.json({
-        success: true,
-        shipping_charge: subtotal >= 500 ? 0 : 50,
-        courier_name: 'Standard',
-        service_mode: 'surface',
-        all_rates: [],
-        fallback: true,
-        fship_response: data
-      });
     }
 
-  } catch (err) {
-    console.error('[FSHIP RATE] ERROR:', err.response?.status, err.response?.data || err.message);
-    // Return fallback rate so checkout isn't blocked — but include error info
-    const subtotal = (req.body.items || []).reduce((s, i) => s + ((i.price || 0) * (i.qty || 1)), 0);
-    res.json({
+    // Fship returned but no rates — use weight-based fallback
+    console.log('[FSHIP RATE] No rates from Fship, using weight-based fallback');
+    const fallback = calculateFallbackShipping(sourcePincode, destination_pincode, totalWeight);
+    return res.json({
       success: true,
-      shipping_charge: subtotal >= 500 ? 0 : 50,
-      courier_name: 'Standard',
-      service_mode: 'surface',
+      ...fallback,
       all_rates: [],
-      fallback: true,
-      fship_error: err.response?.data || err.message
+      fallback: true
+    });
+
+  } catch (err) {
+    console.error('[FSHIP RATE] API error:', err.response?.status || err.message);
+    // Fship unavailable — use weight-based fallback
+    const sourcePincode = process.env.FSHIP_SOURCE_PINCODE || '110034';
+    let totalWeight = 0;
+    (req.body.items || []).forEach(i => {
+      totalWeight += (parseFloat(i.weight) || 0.5) * (i.qty || i.quantity || 1);
+    });
+    if (totalWeight === 0) totalWeight = 0.5;
+
+    const fallback = calculateFallbackShipping(sourcePincode, destination_pincode, totalWeight);
+    return res.json({
+      success: true,
+      ...fallback,
+      all_rates: [],
+      fallback: true
     });
   }
 });
