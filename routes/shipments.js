@@ -4,7 +4,7 @@ const checkJwt = require('../middleware/auth');
 const db = require('../db');
 const axios = require('axios');
 
-const FSHIP_BASE = 'https://capi.fship.in';
+const FSHIP_BASE = 'https://capi-qc.fship.in';
 
 // ── DIAGNOSTIC (no auth required) ──────────────
 router.get('/test-fship', async (req, res) => {
@@ -59,7 +59,7 @@ router.use(checkJwt);
 // ──────────────────────────────────────────────
 router.post('/create', async (req, res) => {
   const { order_id } = req.body;
-  
+
   try {
     // 1. Get Order + Address + Items details
     const [orders] = await db.query(`
@@ -91,7 +91,7 @@ router.post('/create', async (req, res) => {
     items.forEach(item => {
       const qty = item.quantity || 1;
       totalWeight += (parseFloat(item.weight) || 0.5) * qty;
-      
+
       const l = parseFloat(item.length) || 25;
       const w = parseFloat(item.width) || 18;
       const h = parseFloat(item.height) || 5;
@@ -150,6 +150,7 @@ router.post('/create', async (req, res) => {
     };
 
     // 4. Call Fship API
+    console.log("=== FSHIP REQUEST - CREATE ORDER ===", JSON.stringify(fshipPayload, null, 2));
     const fshipResponse = await axios.post(
       `${FSHIP_BASE}/api/createforwardorder`,
       fshipPayload,
@@ -163,6 +164,7 @@ router.post('/create', async (req, res) => {
     );
 
     const fshipData = fshipResponse.data;
+    console.log("=== FSHIP RESPONSE - CREATE ORDER ===", JSON.stringify(fshipData, null, 2));
 
     if (fshipData.status === true && fshipData.waybill) {
       // 5. Save to shipments table
@@ -180,10 +182,10 @@ router.post('/create', async (req, res) => {
       // 6. Update order status
       await db.query('UPDATE orders SET status = ? WHERE id = ?', ['Confirmed', order_id]);
 
-      res.json({ 
-        success: true, 
-        awb: fshipData.waybill, 
-        fship_order_id: fshipData.apiorderid 
+      res.json({
+        success: true,
+        awb: fshipData.waybill,
+        fship_order_id: fshipData.apiorderid
       });
     } else {
       // Fship returned an error — save a placeholder so we can retry later
@@ -193,8 +195,8 @@ router.post('/create', async (req, res) => {
         VALUES (?, ?, ?, ?)
       `, [order_id, 'PENDING', 'Pending', 'Awaiting Assignment']);
 
-      res.json({ 
-        success: false, 
+      res.json({
+        success: false,
         message: fshipData.response || 'Fship order creation failed, saved as pending',
         fship_response: fshipData
       });
@@ -202,7 +204,7 @@ router.post('/create', async (req, res) => {
 
   } catch (err) {
     console.error('Shipment creation error:', err.response?.data || err.message);
-    
+
     // Save a pending record so we don't lose the order
     try {
       await db.query(`
@@ -230,9 +232,12 @@ router.post('/track', async (req, res) => {
   }
 
   try {
+    const trackingPayload = { waybill: awb_code };
+    console.log("=== FSHIP REQUEST - TRACKING ===", JSON.stringify(trackingPayload, null, 2));
+
     const fshipResponse = await axios.post(
       `${FSHIP_BASE}/api/trackinghistory`,
-      { waybill: awb_code },
+      trackingPayload,
       {
         headers: {
           'Content-Type': 'application/json',
@@ -242,6 +247,7 @@ router.post('/track', async (req, res) => {
       }
     );
 
+    console.log("=== FSHIP RESPONSE - TRACKING ===", JSON.stringify(fshipResponse.data, null, 2));
     res.json(fshipResponse.data);
   } catch (err) {
     console.error('Tracking error:', err.response?.data || err.message);
@@ -270,9 +276,12 @@ router.post('/cancel', async (req, res) => {
     }
 
     // Call Fship cancel API
+    const cancelPayload = { waybill: shipments[0].awb_code, reason: reason || 'Cancelled by customer' };
+    console.log("=== FSHIP REQUEST - CANCEL ORDER ===", JSON.stringify(cancelPayload, null, 2));
+
     const fshipResponse = await axios.post(
       `${FSHIP_BASE}/api/cancelorder`,
-      { waybill: shipments[0].awb_code, reason: reason || 'Cancelled by customer' },
+      cancelPayload,
       {
         headers: {
           'Content-Type': 'application/json',
@@ -281,6 +290,8 @@ router.post('/cancel', async (req, res) => {
         timeout: 15000
       }
     );
+
+    console.log("=== FSHIP RESPONSE - CANCEL ORDER ===", JSON.stringify(fshipResponse.data, null, 2));
 
     if (fshipResponse.data.status === true) {
       await db.query('UPDATE orders SET status = ? WHERE id = ?', ['Cancelled', order_id]);
@@ -308,9 +319,12 @@ router.post('/status', async (req, res) => {
   }
 
   try {
+    const summaryPayload = { waybill: awb_code };
+    console.log("=== FSHIP REQUEST - SHIPMENT SUMMARY ===", JSON.stringify(summaryPayload, null, 2));
+
     const fshipResponse = await axios.post(
       `${FSHIP_BASE}/api/shipmentsummary`,
-      { waybill: awb_code },
+      summaryPayload,
       {
         headers: {
           'Content-Type': 'application/json',
@@ -321,7 +335,8 @@ router.post('/status', async (req, res) => {
     );
 
     const summary = fshipResponse.data;
-    
+    console.log("=== FSHIP RESPONSE - SHIPMENT SUMMARY ===", JSON.stringify(summary, null, 2));
+
     // Also update our local DB with latest status
     if (summary.status && summary.summary) {
       await db.query(
@@ -341,44 +356,37 @@ router.post('/status', async (req, res) => {
 // 5. ESTIMATE SHIPPING RATE (called from cart page before checkout)
 // ──────────────────────────────────────────────
 
-// Realistic fallback shipping calculator (used when Fship API is unavailable)
+// Realistic fallback shipping calculator (calibrated to match Fship rates)
+// Verified: Delhi(110034)→Pune(411016), 2.5kg, surface = Fship ₹160.48, our calc ₹160
 function calculateFallbackShipping(sourcePincode, destPincode, weightKg) {
-  // Determine zone based on first 3 digits of pincode (India postal zones)
-  const srcZone = sourcePincode.substring(0, 3);
-  const dstZone = destPincode.substring(0, 3);
   const srcRegion = sourcePincode.substring(0, 1);
   const dstRegion = destPincode.substring(0, 1);
+  const srcZone3 = sourcePincode.substring(0, 3);
+  const dstZone3 = destPincode.substring(0, 3);
 
-  let zone; // local, regional, national, remote
-  if (srcZone === dstZone) {
+  let zone;
+  if (srcZone3 === dstZone3) {
     zone = 'local';       // Same area (e.g., within Delhi)
   } else if (srcRegion === dstRegion) {
     zone = 'regional';    // Same region (e.g., North India)
   } else if (['1', '2', '3', '4', '5'].includes(dstRegion)) {
     zone = 'national';    // Metro/major regions
   } else {
-    zone = 'remote';      // NE India, J&K, remote areas
+    zone = 'remote';      // NE India, J&K, remote areas (6-9)
   }
 
-  // Base rates per zone (for first 0.5 kg)
-  const baseRates = {
-    local: 35,
-    regional: 50,
-    national: 65,
-    remote: 85
+  // Per-kg pricing calibrated against Fship dashboard rates
+  // Base = fixed handling charge, perKg = weight-proportional charge
+  const rates = {
+    local: { base: 30, perKg: 18 },   // ~₹48 for 1kg, ~₹66 for 2kg
+    regional: { base: 38, perKg: 24 },   // ~₹62 for 1kg, ~₹86 for 2kg
+    national: { base: 40, perKg: 48 },   // ~₹88 for 1kg, ~₹160 for 2.5kg (matches Fship)
+    remote: { base: 55, perKg: 58 }    // ~₹113 for 1kg, ~₹200 for 2.5kg
   };
 
-  // Additional charge per 0.5 kg
-  const additionalPer500g = {
-    local: 15,
-    regional: 20,
-    national: 25,
-    remote: 35
-  };
-
-  const base = baseRates[zone];
-  const extra = Math.max(0, Math.ceil((weightKg - 0.5) / 0.5)) * additionalPer500g[zone];
-  const shipping = base + extra;
+  const r = rates[zone];
+  const chargeableWeight = Math.max(weightKg, 0.5); // Minimum 0.5 kg
+  const shipping = Math.round(r.base + (r.perKg * chargeableWeight));
 
   return {
     shipping_charge: shipping,
@@ -446,6 +454,7 @@ router.post('/estimate-rate', async (req, res) => {
     };
 
     console.log('[FSHIP RATE] Trying Fship API...');
+    console.log("=== FSHIP REQUEST - RATE CALCULATOR ===", JSON.stringify(ratePayload, null, 2));
 
     const fshipResponse = await axios.post(
       `${FSHIP_BASE}/api/ratecalculator`,
@@ -460,6 +469,7 @@ router.post('/estimate-rate', async (req, res) => {
     );
 
     const data = fshipResponse.data;
+    console.log("=== FSHIP RESPONSE - RATE CALCULATOR ===", JSON.stringify(data, null, 2));
 
     if (data.status === true && data.shipment_rates && data.shipment_rates.length > 0) {
       console.log('[FSHIP RATE] Got rates from Fship!');
