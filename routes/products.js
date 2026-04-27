@@ -2,9 +2,19 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
+let cachedProducts = null;
+let lastFetchTime = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
 // GET all products
 router.get('/', async (req, res) => {
   try {
+    const now = Date.now();
+    // Check if we have valid cached products
+    if (cachedProducts && (now - lastFetchTime < CACHE_DURATION)) {
+      return res.json(cachedProducts);
+    }
+
     const [rows] = await db.query('SELECT * FROM products');
     const products = rows.map(p => {
       const tags = [p.tag1, p.tag2, p.tag3].filter(t => t);
@@ -27,6 +37,13 @@ router.get('/', async (req, res) => {
         searchTags: [p.title, p.description, p.tag1, p.tag2, p.tag3].filter(Boolean).join(' ').toLowerCase()
       };
     });
+    
+    // Update cache
+    cachedProducts = products;
+    lastFetchTime = now;
+    
+    // Send response with caching headers
+    res.set('Cache-Control', 'public, max-age=300'); // Cache in browser for 5 mins
     res.json(products);
   } catch (err) {
     res.status(500).json({ error: err.message });
