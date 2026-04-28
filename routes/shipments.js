@@ -7,49 +7,131 @@ const axios = require('axios');
 const FSHIP_BASE = 'https://capi-qc.fship.in';
 
 // ── DIAGNOSTIC (no auth required) ──────────────
+// ── DIAGNOSTIC (no auth required) ──────────────
 router.get('/test-fship', async (req, res) => {
-  const apiKey = process.env.FSHIP_API_KEY;
-  const testPayload = {
-    source_Pincode: process.env.FSHIP_SOURCE_PINCODE || '110034',
-    destination_Pincode: '700074',
-    payment_Mode: 'P',
-    amount: 295,
-    express_Type: 'surface',
-    shipment_Wweight: 0.5,
-    shipment_Length: 25,
-    shipment_Width: 18,
-    shipment_Hheight: 5,
-    volumetric_Wweight: 0
-  };
+  const stagingKey = '085c36066064af83c66b9dbf44d190d40feec79f437bc1c1cb';
+  const headers = { 'Content-Type': 'application/json', 'signature': stagingKey };
+  const results = {};
 
-  const tests = [
-    { name: 'capi + signature', url: 'https://capi.fship.in/api/ratecalculator', headers: { 'signature': apiKey } },
-    { name: 'capi + signature bearer', url: 'https://capi.fship.in/api/ratecalculator', headers: { 'signature': `bearer ${apiKey}` } },
-    { name: 'capi + Authorization Bearer', url: 'https://capi.fship.in/api/ratecalculator', headers: { 'Authorization': `Bearer ${apiKey}` } },
-    { name: 'capi + token', url: 'https://capi.fship.in/api/ratecalculator', headers: { 'token': apiKey } },
-    { name: 'capi-qc + signature', url: 'https://capi-qc.fship.in/api/ratecalculator', headers: { 'signature': apiKey } },
-    { name: 'api.fship + signature', url: 'https://api.fship.in/api/ratecalculator', headers: { 'signature': apiKey } },
-  ];
+  try {
+    // Hardcoded staging warehouse ID as requested
+    const stagingWarehouseId = 12673;
+    results.warehouse_info = { message: "Skipped add_warehouse", stagingWarehouseId };
 
-  const results = [];
-  for (const test of tests) {
+    // 1. Rate Calculator
+    const ratePayload = {
+      source_Pincode: "110034", // Default source pincode for testing
+      destination_Pincode: '700074',
+      payment_Mode: 'P',
+      amount: 295,
+      express_Type: 'surface',
+      shipment_Wweight: 0.5,
+      shipment_Length: 25,
+      shipment_Width: 18,
+      shipment_Hheight: 5,
+      volumetric_Wweight: 0
+    };
+    results.rate_calculator = { request: ratePayload };
+    const rateResp = await axios.post(`${FSHIP_BASE}/api/ratecalculator`, ratePayload, { headers, timeout: 10000 });
+    results.rate_calculator.response = rateResp.data;
+
+    // 2. Create Forward Order
+    const createPayload = {
+      customer_Name: "Test User",
+      customer_Mobile: "9999999999",
+      customer_Emailid: "test@example.com",
+      customer_Address: "Test Address Line 1",
+      customer_Address_Type: "Home",
+      customer_PinCode: "700074",
+      customer_City: "Kolkata",
+      orderId: `TEST-${Date.now()}`,
+      invoice_Number: `INV-${Date.now()}`,
+      payment_Mode: 2, // Prepaid
+      express_TYPE: 'surface',
+      order_Amount: 295,
+      total_Amount: 295,
+      shipment_Weight: 0.5,
+      shipment_Length: 25,
+      shipment_Width: 18,
+      shipment_Height: 5,
+      pick_Address_ID: stagingWarehouseId,
+      return_Address_ID: stagingWarehouseId,
+      products: [{
+        productId: "TEST-PROD-1",
+        productName: "Test Book",
+        unitPrice: 295,
+        quantity: 1,
+        productCategory: 'Books',
+        sku: "TEST-SKU-1"
+      }],
+      courierId: 0
+    };
+    results.create_order = { request: createPayload };
+    const createResp = await axios.post(`${FSHIP_BASE}/api/createforwardorder`, createPayload, { headers, timeout: 30000 });
+    results.create_order.response = createResp.data;
+
+    // Use hardcoded AWB for testing as requested
+    const awb = '90001652366';
+
+    // 3. Tracking History
+    const trackPayload = { waybill: awb };
+    results.tracking = { request: trackPayload };
     try {
-      const resp = await axios.post(test.url, testPayload, {
-        headers: { 'Content-Type': 'application/json', ...test.headers },
-        timeout: 10000
-      });
-      results.push({ name: test.name, status: resp.status, data: resp.data });
-    } catch (err) {
-      results.push({ name: test.name, status: err.response?.status || 'NETWORK_ERROR', data: err.response?.data || err.message });
+      const trackResp = await axios.post(`${FSHIP_BASE}/api/trackinghistory`, trackPayload, { headers, timeout: 15000 });
+      results.tracking.response = trackResp.data;
+    } catch (e) {
+      results.tracking.response = e.response?.data || e.message;
     }
-  }
 
-  res.json({
-    api_key_present: !!apiKey,
-    api_key_length: (apiKey || '').length,
-    api_key_preview: (apiKey || 'NOT SET').substring(0, 15) + '...',
-    results
-  });
+    // 4. Shipment Summary
+    const summaryPayload = { waybill: awb };
+    results.summary = { request: summaryPayload };
+    try {
+      // Using absolute URL as requested to resolve 404
+      const summaryResp = await axios.post(`https://capi-qc.fship.in/api/shipmentsummary`, summaryPayload, { headers, timeout: 15000 });
+      results.summary.response = summaryResp.data;
+    } catch (e) {
+      results.summary.response = e.response?.data || e.message;
+    }
+
+    // 5. Cancel Order
+    const cancelPayload = { waybill: awb, reason: "Test Cancellation" };
+    results.cancel = { request: cancelPayload };
+    try {
+      const cancelResp = await axios.post(`${FSHIP_BASE}/api/cancelorder`, cancelPayload, { headers, timeout: 15000 });
+      results.cancel.response = cancelResp.data;
+    } catch (e) {
+      results.cancel.response = e.response?.data || e.message;
+    }
+
+    // Final response assembly
+    const finalResponse = {
+      success: true,
+      diagnostic_timestamp: new Date().toISOString(),
+      awb_used: awb,
+      steps: {
+        step0_warehouse_status: results.warehouse_info,
+        step1_rate_calculator: results.rate_calculator,
+        step2_create_order: results.create_order,
+        step3_tracking: results.tracking,
+        step4_summary: results.summary,
+        step5_cancel_order: results.cancel
+      }
+    };
+
+    res.header("Content-Type", "application/json");
+    res.send(JSON.stringify(finalResponse, null, 2));
+
+  } catch (err) {
+    const errorResponse = {
+      success: false,
+      error_message: err.message,
+      error_details: err.response?.data || "No additional details",
+      partial_results: results
+    };
+    res.header("Content-Type", "application/json");
+    res.status(500).send(JSON.stringify(errorResponse, null, 2));
+  }
 });
 
 router.use(checkJwt);
@@ -157,7 +239,7 @@ router.post('/create', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_API_KEY
+          'signature': process.env.FSHIP_STAGING_KEY
         },
         timeout: 30000
       }
@@ -241,7 +323,7 @@ router.post('/track', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_API_KEY
+          'signature': process.env.FSHIP_STAGING_KEY
         },
         timeout: 15000
       }
@@ -285,7 +367,7 @@ router.post('/cancel', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_API_KEY
+          'signature': process.env.FSHIP_STAGING_KEY
         },
         timeout: 15000
       }
@@ -328,7 +410,7 @@ router.post('/status', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_API_KEY
+          'signature': process.env.FSHIP_STAGING_KEY
         },
         timeout: 15000
       }
@@ -462,7 +544,7 @@ router.post('/estimate-rate', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_API_KEY
+          'signature': process.env.FSHIP_STAGING_KEY
         },
         timeout: 10000
       }
