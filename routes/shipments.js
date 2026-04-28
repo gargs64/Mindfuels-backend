@@ -453,10 +453,21 @@ router.post('/create', async (req, res) => {
     }
 
   } catch (err) {
-    console.error('SHIPMENT CREATION CRASHED:', err.message);
-    if (err.response) {
-      console.error('Fship API Error Data:', JSON.stringify(err.response.data, null, 2));
+    console.error('=== FSHIP API CRITICAL FAILURE ===');
+    console.error('Status Code:', err.response?.status || 'N/A');
+    console.error('Error Message:', err.message);
+    
+    if (err.response && err.response.data) {
+      console.error('FSHIP ERROR BODY:', JSON.stringify(err.response.data, null, 2));
+    } else {
+      console.error('No response data from Fship.');
     }
+
+    if (err.config) {
+      console.log('Attempted URL:', err.config.url);
+      console.log('Attempted Payload:', err.config.data);
+    }
+    console.error('==================================');
 
     // Save a pending record so we don't lose the order
     try {
@@ -464,7 +475,7 @@ router.post('/create', async (req, res) => {
         INSERT INTO shipments (order_id, awb_code, status, courier_name)
         VALUES (?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE status = 'Error'
-      `, [order_id, 'PENDING', 'Error', 'Backend Crash: ' + err.message]);
+      `, [order_id, 'PENDING', 'Error', 'Fship 500: ' + (err.message || 'Unknown')]);
     } catch (dbErr) {
       console.error('Failed to save pending shipment:', dbErr.message);
     }
