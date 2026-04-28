@@ -158,10 +158,10 @@ function calculateFallbackShipping(sourcePincode, destPincode, weightKg) {
   }
 
   const rates = {
-    local: { base: 30, perKg: 18 },
-    regional: { base: 38, perKg: 24 },
-    national: { base: 40, perKg: 48 },
-    remote: { base: 55, perKg: 58 }
+    local: { base: 26, perKg: 18 },   // ~₹35 for 0.5kg, ~₹44 for 1kg
+    regional: { base: 34, perKg: 22 }, // ~₹45 for 0.5kg, ~₹56 for 1kg
+    national: { base: 40, perKg: 48 }, // ~₹64 for 0.5kg, ~₹88 for 1kg
+    remote: { base: 55, perKg: 58 }    // ~₹84 for 0.5kg, ~₹113 for 1kg
   };
 
   const r = rates[zone];
