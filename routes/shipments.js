@@ -283,6 +283,13 @@ router.use(checkJwt);
 router.post('/create', async (req, res) => {
   const { order_id } = req.body;
 
+  console.log("=== SHIPMENT CREATION STARTED ===");
+  console.log("Order ID:", order_id);
+  
+  // Diagnostic: Check environment variables
+  if (!process.env.FSHIP_API_KEY) console.error("CRITICAL: FSHIP_API_KEY is missing from environment!");
+  if (!process.env.FSHIP_PICKUP_ADDRESS_ID) console.error("CRITICAL: FSHIP_PICKUP_ADDRESS_ID is missing from environment!");
+
   try {
     // 1. Get Order + Address + Items details
     const [orders] = await db.query(`
@@ -431,29 +438,33 @@ router.post('/create', async (req, res) => {
       });
     } else {
       // Fship returned an error — save a placeholder so we can retry later
-      console.error('Fship API response:', fshipData);
+      console.error('FSHIP API FAILED! Full Response:', JSON.stringify(fshipData, null, 2));
+      
       await db.query(`
         INSERT INTO shipments (order_id, awb_code, status, courier_name)
         VALUES (?, ?, ?, ?)
-      `, [order_id, 'PENDING', 'Pending', 'Awaiting Assignment']);
+      `, [order_id, 'PENDING', 'Pending', 'Fship Error: ' + (fshipData.response || 'Unknown')]);
 
       res.json({
         success: false,
-        message: fshipData.response || 'Fship order creation failed, saved as pending',
+        message: fshipData.response || 'Fship order creation failed',
         fship_response: fshipData
       });
     }
 
   } catch (err) {
-    console.error('Shipment creation error:', err.response?.data || err.message);
+    console.error('SHIPMENT CREATION CRASHED:', err.message);
+    if (err.response) {
+      console.error('Fship API Error Data:', JSON.stringify(err.response.data, null, 2));
+    }
 
     // Save a pending record so we don't lose the order
     try {
       await db.query(`
         INSERT INTO shipments (order_id, awb_code, status, courier_name)
         VALUES (?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE status = 'Pending'
-      `, [order_id, 'PENDING', 'Pending', 'Awaiting Assignment']);
+        ON DUPLICATE KEY UPDATE status = 'Error'
+      `, [order_id, 'PENDING', 'Error', 'Backend Crash: ' + err.message]);
     } catch (dbErr) {
       console.error('Failed to save pending shipment:', dbErr.message);
     }
