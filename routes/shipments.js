@@ -135,6 +135,146 @@ router.get('/test-fship', async (req, res) => {
   }
 });
 
+// ──────────────────────────────────────────────
+// 5. ESTIMATE SHIPPING RATE (called from cart page before checkout)
+// ──────────────────────────────────────────────
+
+// Realistic fallback shipping calculator (calibrated to match Fship rates)
+function calculateFallbackShipping(sourcePincode, destPincode, weightKg) {
+  const srcRegion = sourcePincode.substring(0, 1);
+  const dstRegion = destPincode.substring(0, 1);
+  const srcZone3 = sourcePincode.substring(0, 3);
+  const dstZone3 = destPincode.substring(0, 3);
+
+  let zone;
+  if (srcZone3 === dstZone3) {
+    zone = 'local';
+  } else if (srcRegion === dstRegion) {
+    zone = 'regional';
+  } else if (['1', '2', '3', '4', '5'].includes(dstRegion)) {
+    zone = 'national';
+  } else {
+    zone = 'remote';
+  }
+
+  const rates = {
+    local: { base: 30, perKg: 18 },
+    regional: { base: 38, perKg: 24 },
+    national: { base: 40, perKg: 48 },
+    remote: { base: 55, perKg: 58 }
+  };
+
+  const r = rates[zone];
+  const chargeableWeight = Math.max(weightKg, 0.5);
+  const shipping = Math.round(r.base + (r.perKg * chargeableWeight));
+
+  return {
+    shipping_charge: shipping,
+    courier_name: 'Standard Delivery',
+    service_mode: 'surface',
+    zone: zone
+  };
+}
+
+router.post('/estimate-rate', async (req, res) => {
+  const { destination_pincode, items } = req.body;
+
+  if (!destination_pincode || !items || items.length === 0) {
+    return res.status(400).json({ message: 'Pincode and items are required' });
+  }
+
+  try {
+    let totalWeight = 0;
+    let maxLength = 0;
+    let maxWidth = 0;
+    let totalHeight = 0;
+
+    const productIds = items.map(i => i.id || i.product_id);
+    const [products] = await db.query(
+      'SELECT product_id, weight, length, width, height FROM products WHERE product_id IN (?)',
+      [productIds]
+    );
+
+    const dimMap = {};
+    products.forEach(p => { dimMap[p.product_id] = p; });
+
+    items.forEach(item => {
+      const pid = item.id || item.product_id;
+      const dims = dimMap[pid];
+      const qty = item.qty || item.quantity || 1;
+
+      totalWeight += (parseFloat(dims?.weight) || 0.5) * qty;
+      const l = parseFloat(dims?.length) || 25;
+      const w = parseFloat(dims?.width) || 18;
+      const h = parseFloat(dims?.height) || 5;
+
+      if (l > maxLength) maxLength = l;
+      if (w > maxWidth) maxWidth = w;
+      totalHeight += h * qty;
+    });
+
+    const subtotal = items.reduce((sum, i) => sum + ((i.price || 0) * (i.qty || i.quantity || 1)), 0);
+    const discountedTotal = Math.round(subtotal * 0.90);
+    const sourcePincode = process.env.FSHIP_SOURCE_PINCODE || '110034';
+
+    const ratePayload = {
+      source_Pincode: sourcePincode,
+      destination_Pincode: destination_pincode,
+      payment_Mode: 'P',
+      amount: discountedTotal,
+      express_Type: 'surface',
+      shipment_Wweight: parseFloat(totalWeight.toFixed(2)),
+      shipment_Length: parseFloat(maxLength.toFixed(2)),
+      shipment_Width: parseFloat(maxWidth.toFixed(2)),
+      shipment_Hheight: parseFloat(totalHeight.toFixed(2)),
+      volumetric_Wweight: 0
+    };
+
+    console.log('[FSHIP RATE] Trying Fship API...');
+    const fshipResponse = await axios.post(
+      `${FSHIP_BASE}/api/ratecalculator`,
+      ratePayload,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'signature': process.env.FSHIP_API_KEY
+        },
+        timeout: 10000
+      }
+    );
+
+    const data = fshipResponse.data;
+    if (data.status === true && data.shipment_rates && data.shipment_rates.length > 0) {
+      const cheapest = data.shipment_rates.reduce((min, r) =>
+        r.shipping_charge < min.shipping_charge ? r : min, data.shipment_rates[0]);
+
+      return res.json({
+        success: true,
+        shipping_charge: cheapest.shipping_charge,
+        courier_name: cheapest.courier_name,
+        service_mode: cheapest.service_mode,
+        all_rates: data.shipment_rates,
+        fallback: false
+      });
+    }
+
+    const fallback = calculateFallbackShipping(sourcePincode, destination_pincode, totalWeight);
+    return res.json({ success: true, ...fallback, all_rates: [], fallback: true });
+
+  } catch (err) {
+    console.error('[FSHIP RATE] API error:', err.message);
+    const sourcePincode = process.env.FSHIP_SOURCE_PINCODE || '110034';
+    let totalWeight = 0;
+    (req.body.items || []).forEach(i => {
+      totalWeight += (parseFloat(i.weight) || 0.5) * (i.qty || i.quantity || 1);
+    });
+    if (totalWeight === 0) totalWeight = 0.5;
+
+    const fallback = calculateFallbackShipping(sourcePincode, destination_pincode, totalWeight);
+    return res.json({ success: true, ...fallback, all_rates: [], fallback: true });
+  }
+});
+
 router.use(checkJwt);
 
 // ──────────────────────────────────────────────
@@ -444,170 +584,6 @@ router.post('/webhook/status', async (req, res) => {
   } catch (err) {
     console.error('Webhook error:', err.message);
     res.status(500).json({ error: 'Internal server error processing webhook' });
-  }
-});
-
-// ──────────────────────────────────────────────
-// 5. ESTIMATE SHIPPING RATE (called from cart page before checkout)
-// ──────────────────────────────────────────────
-
-// Realistic fallback shipping calculator (calibrated to match Fship rates)
-// Verified: Delhi(110034)→Pune(411016), 2.5kg, surface = Fship ₹160.48, our calc ₹160
-function calculateFallbackShipping(sourcePincode, destPincode, weightKg) {
-  const srcRegion = sourcePincode.substring(0, 1);
-  const dstRegion = destPincode.substring(0, 1);
-  const srcZone3 = sourcePincode.substring(0, 3);
-  const dstZone3 = destPincode.substring(0, 3);
-
-  let zone;
-  if (srcZone3 === dstZone3) {
-    zone = 'local';       // Same area (e.g., within Delhi)
-  } else if (srcRegion === dstRegion) {
-    zone = 'regional';    // Same region (e.g., North India)
-  } else if (['1', '2', '3', '4', '5'].includes(dstRegion)) {
-    zone = 'national';    // Metro/major regions
-  } else {
-    zone = 'remote';      // NE India, J&K, remote areas (6-9)
-  }
-
-  // Per-kg pricing calibrated against Fship dashboard rates
-  // Base = fixed handling charge, perKg = weight-proportional charge
-  const rates = {
-    local: { base: 30, perKg: 18 },   // ~₹48 for 1kg, ~₹66 for 2kg
-    regional: { base: 38, perKg: 24 },   // ~₹62 for 1kg, ~₹86 for 2kg
-    national: { base: 40, perKg: 48 },   // ~₹88 for 1kg, ~₹160 for 2.5kg (matches Fship)
-    remote: { base: 55, perKg: 58 }    // ~₹113 for 1kg, ~₹200 for 2.5kg
-  };
-
-  const r = rates[zone];
-  const chargeableWeight = Math.max(weightKg, 0.5); // Minimum 0.5 kg
-  const shipping = Math.round(r.base + (r.perKg * chargeableWeight));
-
-  return {
-    shipping_charge: shipping,
-    courier_name: 'Standard Delivery',
-    service_mode: 'surface',
-    zone: zone
-  };
-}
-
-router.post('/estimate-rate', async (req, res) => {
-  const { destination_pincode, items } = req.body;
-
-  if (!destination_pincode || !items || items.length === 0) {
-    return res.status(400).json({ message: 'Pincode and items are required' });
-  }
-
-  try {
-    // Calculate total weight & dimensions from cart items
-    let totalWeight = 0;
-    let maxLength = 0;
-    let maxWidth = 0;
-    let totalHeight = 0;
-
-    // Fetch product dimensions from DB
-    const productIds = items.map(i => i.id || i.product_id);
-    const [products] = await db.query(
-      'SELECT product_id, weight, length, width, height FROM products WHERE product_id IN (?)',
-      [productIds]
-    );
-
-    const dimMap = {};
-    products.forEach(p => { dimMap[p.product_id] = p; });
-
-    items.forEach(item => {
-      const pid = item.id || item.product_id;
-      const dims = dimMap[pid];
-      const qty = item.qty || item.quantity || 1;
-
-      totalWeight += (parseFloat(dims?.weight) || 0.5) * qty;
-      const l = parseFloat(dims?.length) || 25;
-      const w = parseFloat(dims?.width) || 18;
-      const h = parseFloat(dims?.height) || 5;
-
-      if (l > maxLength) maxLength = l;
-      if (w > maxWidth) maxWidth = w;
-      totalHeight += h * qty;
-    });
-
-    const subtotal = items.reduce((sum, i) => sum + ((i.price || 0) * (i.qty || i.quantity || 1)), 0);
-    const discountedTotal = Math.round(subtotal * 0.90);
-    const sourcePincode = process.env.FSHIP_SOURCE_PINCODE || '110034';
-
-    // Try Fship API first
-    const ratePayload = {
-      source_Pincode: sourcePincode,
-      destination_Pincode: destination_pincode,
-      payment_Mode: 'P',
-      amount: discountedTotal,
-      express_Type: 'surface',
-      shipment_Wweight: parseFloat(totalWeight.toFixed(2)),
-      shipment_Length: parseFloat(maxLength.toFixed(2)),
-      shipment_Width: parseFloat(maxWidth.toFixed(2)),
-      shipment_Hheight: parseFloat(totalHeight.toFixed(2)),
-      volumetric_Wweight: 0
-    };
-
-    console.log('[FSHIP RATE] Trying Fship API...');
-    console.log("=== FSHIP REQUEST - RATE CALCULATOR ===", JSON.stringify(ratePayload, null, 2));
-
-    const fshipResponse = await axios.post(
-      `${FSHIP_BASE}/api/ratecalculator`,
-      ratePayload,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_API_KEY
-        },
-        timeout: 10000
-      }
-    );
-
-    const data = fshipResponse.data;
-    console.log("=== FSHIP RESPONSE - RATE CALCULATOR ===", JSON.stringify(data, null, 2));
-
-    if (data.status === true && data.shipment_rates && data.shipment_rates.length > 0) {
-      console.log('[FSHIP RATE] Got rates from Fship!');
-      const cheapest = data.shipment_rates.reduce((min, r) =>
-        r.shipping_charge < min.shipping_charge ? r : min, data.shipment_rates[0]);
-
-      return res.json({
-        success: true,
-        shipping_charge: cheapest.shipping_charge,
-        courier_name: cheapest.courier_name,
-        service_mode: cheapest.service_mode,
-        all_rates: data.shipment_rates,
-        fallback: false
-      });
-    }
-
-    // Fship returned but no rates — use weight-based fallback
-    console.log('[FSHIP RATE] No rates from Fship, using weight-based fallback');
-    const fallback = calculateFallbackShipping(sourcePincode, destination_pincode, totalWeight);
-    return res.json({
-      success: true,
-      ...fallback,
-      all_rates: [],
-      fallback: true
-    });
-
-  } catch (err) {
-    console.error('[FSHIP RATE] API error:', err.response?.status || err.message);
-    // Fship unavailable — use weight-based fallback
-    const sourcePincode = process.env.FSHIP_SOURCE_PINCODE || '110034';
-    let totalWeight = 0;
-    (req.body.items || []).forEach(i => {
-      totalWeight += (parseFloat(i.weight) || 0.5) * (i.qty || i.quantity || 1);
-    });
-    if (totalWeight === 0) totalWeight = 0.5;
-
-    const fallback = calculateFallbackShipping(sourcePincode, destination_pincode, totalWeight);
-    return res.json({
-      success: true,
-      ...fallback,
-      all_rates: [],
-      fallback: true
-    });
   }
 });
 
