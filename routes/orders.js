@@ -116,7 +116,7 @@ router.post('/', async (req, res) => {
 
     const [orderResult] = await db.query(
       `INSERT INTO orders (user_id, address_id, total_amount, shipping_charge, status, payment_status, payment_id)
-       VALUES (?, ?, ?, ?, 'Processing', 'Paid', ?)`,
+       VALUES (?, ?, ?, ?, 'Ordered', 'Paid', ?)`,
       [userId, addressId, grandTotal, shippingCharge, payment_id]
     );
     const orderId = orderResult.insertId;
@@ -206,23 +206,31 @@ router.get('/', async (req, res) => {
   try {
     const [users] = await db.query('SELECT id FROM users WHERE auth0_id = ?', [auth0Id]);
     if (users.length === 0) return res.status(404).json({ message: 'User not found' });
+    const userId = users[0].id;
 
     const [orders] = await db.query(`
       SELECT o.id, o.total_amount, o.shipping_charge, o.status, o.payment_status, o.created_at,
              sa.city, sa.state, sa.pincode,
-             sh.awb_code, sh.courier_name, sh.status as shipment_status,
-             (SELECT p.image1 
-              FROM order_items oi 
-              JOIN products p ON oi.product_id = p.product_id 
-              WHERE oi.order_id = o.id LIMIT 1) as thumbnail
+             sh.awb_code, sh.courier_name, sh.status as shipment_status
       FROM orders o
       JOIN shipping_address sa ON o.address_id = sa.id
       LEFT JOIN shipments sh ON sh.order_id = o.id
       WHERE o.user_id = ?
       ORDER BY o.created_at DESC
-    `, [users[0].id]);
+    `, [userId]);
 
-    res.json(orders);
+    // Fetch products for each order
+    const enrichedOrders = await Promise.all(orders.map(async (order) => {
+      const [items] = await db.query(`
+        SELECT oi.quantity, oi.price, p.title, p.image1
+        FROM order_items oi
+        JOIN products p ON oi.product_id = p.product_id
+        WHERE oi.order_id = ?
+      `, [order.id]);
+      return { ...order, products: items };
+    }));
+
+    res.json(enrichedOrders);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

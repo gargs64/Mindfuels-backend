@@ -406,6 +406,48 @@ router.post('/status', async (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+// 6. FSHIP WEBHOOK — Receives automated status updates
+// ──────────────────────────────────────────────
+router.post('/webhook/status', async (req, res) => {
+  console.log("=== FSHIP WEBHOOK RECEIVED ===", JSON.stringify(req.body, null, 2));
+  
+  const { awb, status, current_status } = req.body;
+  const newStatus = status || current_status;
+
+  if (!awb || !newStatus) {
+    return res.status(400).json({ message: 'Invalid webhook payload' });
+  }
+
+  try {
+    // 1. Update Shipment Table
+    await db.query(
+      'UPDATE shipments SET status = ? WHERE awb_code = ?',
+      [newStatus, awb]
+    );
+
+    // 2. Map Fship status to Order status
+    let orderStatus = 'Processing';
+    if (newStatus.toLowerCase().includes('shipped')) orderStatus = 'Shipped';
+    if (newStatus.toLowerCase().includes('delivered')) orderStatus = 'Delivered';
+    if (newStatus.toLowerCase().includes('out for delivery')) orderStatus = 'Out for Delivery';
+    if (newStatus.toLowerCase().includes('return')) orderStatus = 'Returning';
+
+    // 3. Update Orders Table
+    await db.query(`
+      UPDATE orders o
+      JOIN shipments s ON o.id = s.order_id
+      SET o.status = ?
+      WHERE s.awb_code = ?
+    `, [orderStatus, awb]);
+
+    res.json({ success: true, message: 'Status updated via webhook' });
+  } catch (err) {
+    console.error('Webhook error:', err.message);
+    res.status(500).json({ error: 'Internal server error processing webhook' });
+  }
+});
+
+// ──────────────────────────────────────────────
 // 5. ESTIMATE SHIPPING RATE (called from cart page before checkout)
 // ──────────────────────────────────────────────
 
