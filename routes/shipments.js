@@ -264,6 +264,25 @@ router.post('/create', async (req, res) => {
       // 6. Update order status
       await db.query('UPDATE orders SET status = ? WHERE id = ?', ['Confirmed', order_id]);
 
+      // 7. Register Pickup
+      try {
+        console.log("=== FSHIP REQUEST - REGISTER PICKUP ===", fshipData.waybill);
+        const pickupResp = await axios.post(
+          'https://capi.fship.in/api/registerpickup',
+          { waybills: [fshipData.waybill] },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'signature': process.env.FSHIP_API_KEY
+            },
+            timeout: 15000
+          }
+        );
+        console.log("=== FSHIP RESPONSE - REGISTER PICKUP ===", JSON.stringify(pickupResp.data, null, 2));
+      } catch (pickupErr) {
+        console.error("Fship Register Pickup Error:", pickupErr.response?.data || pickupErr.message);
+      }
+
       res.json({
         success: true,
         awb: fshipData.waybill,
