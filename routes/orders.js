@@ -4,22 +4,23 @@ const db = require('../db');
 const checkJwt = require('../middleware/auth');
 const axios = require('axios');
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 
 router.use(checkJwt);
 
 // CREATE ORDER (call this after payment verified)
 router.post('/', async (req, res) => {
   const auth0Id = req.auth.sub;
-  const { 
-    grand_total, 
+  const {
+    grand_total,
     shipping_charge: clientShippingCharge,
-    shipping_address, 
-    payment_id, 
-    payment_order_id, 
+    shipping_address,
+    payment_id,
+    payment_order_id,
     payment_signature,
     items: frontendItems  // Accept items from frontend to ensure accuracy
   } = req.body;
-  
+
   // Verify Payment Signature
   const secret = process.env.RAZORPAY_KEY_SECRET;
   const body = payment_order_id + "|" + payment_id;
@@ -32,11 +33,21 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ message: "Invalid payment signature" });
   }
 
+  // 0. Setup Nodemailer Transporter
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    }
+  });
+
   try {
     // 1. Get user
-    const [users] = await db.query('SELECT id FROM users WHERE auth0_id = ?', [auth0Id]);
+    const [users] = await db.query('SELECT id, email FROM users WHERE auth0_id = ?', [auth0Id]);
     if (users.length === 0) return res.status(404).json({ message: 'User not found' });
     const userId = users[0].id;
+    const userEmail = users[0].email;
 
     // 2. Build order items — use frontend items (what user actually checked out)
     //    but validate prices against the products table for security
@@ -123,8 +134,9 @@ router.post('/', async (req, res) => {
     await db.query('DELETE FROM cart WHERE user_id = ?', [userId]);
 
     // 7. Auto-create Fship shipment
+    let awb = 'Pending Assignment';
     try {
-      await axios.post(
+      const shipResp = await axios.post(
         `${process.env.BACKEND_URL}/api/shipments/create`,
         { order_id: orderId },
         {
@@ -133,9 +145,46 @@ router.post('/', async (req, res) => {
           }
         }
       );
+      if (shipResp.data.success) {
+        awb = shipResp.data.awb;
+      }
     } catch (shipErr) {
-      // Don't fail the order if shipment fails — log it and continue
       console.error('Fship auto-create warning:', shipErr.message);
+    }
+
+    // 8. Send Confirmation Email
+    try {
+      const itemsHtml = orderItems.map(item => `
+        <li>${item.title} (x${item.quantity}) - ₹${item.price}</li>
+      `).join('');
+
+      const mailOptions = {
+        from: '"Mindfuels" <noreply@mindfuels.in>',
+        to: userEmail,
+        subject: `Order Confirmed - #ORD-${9900 + orderId}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <h2 style="color: #F6AB06;">Thank you for your order!</h2>
+            <p>Hi,</p>
+            <p>Your order <strong>#ORD-${9900 + orderId}</strong> has been successfully placed and is being processed.</p>
+            <h3>Order Summary:</h3>
+            <ul>${itemsHtml}</ul>
+            <p><strong>Total Amount Paid:</strong> ₹${grandTotal}</p>
+            <p><strong>Shipping Address:</strong> ${address_line1}, ${city}, ${pincode}</p>
+            <hr />
+            <p><strong>Logistics Partner:</strong> Fship</p>
+            <p><strong>AWB Number:</strong> ${awb}</p>
+            <p>You can track your order in the "My Orders" section of our website.</p>
+            <br />
+            <p>Happy Reading!<br/>Team Mindfuels</p>
+          </div>
+        `
+      };
+
+      await transporter.sendMail(mailOptions);
+      console.log('Confirmation email sent to:', userEmail);
+    } catch (emailErr) {
+      console.error('Email delivery error:', emailErr.message);
     }
 
     res.json({

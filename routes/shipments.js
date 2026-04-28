@@ -4,7 +4,8 @@ const checkJwt = require('../middleware/auth');
 const db = require('../db');
 const axios = require('axios');
 
-const FSHIP_BASE = 'https://capi-qc.fship.in';
+const FSHIP_BASE = 'https://capi.fship.in'; // Production URL
+const FSHIP_STAGING_BASE = 'https://capi-qc.fship.in'; // Staging for testing
 
 // ── DIAGNOSTIC (no auth required) ──────────────
 // ── DIAGNOSTIC (no auth required) ──────────────
@@ -32,7 +33,7 @@ router.get('/test-fship', async (req, res) => {
       volumetric_Wweight: 0
     };
     results.rate_calculator = { request: ratePayload };
-    const rateResp = await axios.post(`${FSHIP_BASE}/api/ratecalculator`, ratePayload, { headers, timeout: 10000 });
+    const rateResp = await axios.post(`${FSHIP_STAGING_BASE}/api/ratecalculator`, ratePayload, { headers, timeout: 10000 });
     results.rate_calculator.response = rateResp.data;
 
     // 2. Create Forward Order
@@ -67,7 +68,7 @@ router.get('/test-fship', async (req, res) => {
       courierId: 0
     };
     results.create_order = { request: createPayload };
-    const createResp = await axios.post(`${FSHIP_BASE}/api/createforwardorder`, createPayload, { headers, timeout: 30000 });
+    const createResp = await axios.post(`${FSHIP_STAGING_BASE}/api/createforwardorder`, createPayload, { headers, timeout: 30000 });
     results.create_order.response = createResp.data;
 
     // Use hardcoded AWB for testing as requested
@@ -77,7 +78,7 @@ router.get('/test-fship', async (req, res) => {
     const trackPayload = { waybill: awb };
     results.tracking = { request: trackPayload };
     try {
-      const trackResp = await axios.post(`${FSHIP_BASE}/api/trackinghistory`, trackPayload, { headers, timeout: 15000 });
+      const trackResp = await axios.post(`${FSHIP_STAGING_BASE}/api/trackinghistory`, trackPayload, { headers, timeout: 15000 });
       results.tracking.response = trackResp.data;
     } catch (e) {
       results.tracking.response = e.response?.data || e.message;
@@ -98,7 +99,7 @@ router.get('/test-fship', async (req, res) => {
     const cancelPayload = { waybill: awb, reason: "Test Cancellation" };
     results.cancel = { request: cancelPayload };
     try {
-      const cancelResp = await axios.post(`${FSHIP_BASE}/api/cancelorder`, cancelPayload, { headers, timeout: 15000 });
+      const cancelResp = await axios.post(`${FSHIP_STAGING_BASE}/api/cancelorder`, cancelPayload, { headers, timeout: 15000 });
       results.cancel.response = cancelResp.data;
     } catch (e) {
       results.cancel.response = e.response?.data || e.message;
@@ -239,7 +240,7 @@ router.post('/create', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_STAGING_KEY
+          'signature': process.env.FSHIP_API_KEY
         },
         timeout: 30000
       }
@@ -342,7 +343,7 @@ router.post('/track', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_STAGING_KEY
+          'signature': process.env.FSHIP_API_KEY
         },
         timeout: 15000
       }
@@ -357,56 +358,7 @@ router.post('/track', async (req, res) => {
 });
 
 
-// ──────────────────────────────────────────────
-// 3. CANCEL SHIPMENT
-// ──────────────────────────────────────────────
-router.post('/cancel', async (req, res) => {
-  const { order_id, reason } = req.body;
-
-  try {
-    // Get AWB from our database
-    const [shipments] = await db.query(
-      'SELECT awb_code FROM shipments WHERE order_id = ?', [order_id]
-    );
-
-    if (!shipments.length || shipments[0].awb_code === 'PENDING') {
-      // Just update local status if no real AWB exists
-      await db.query('UPDATE orders SET status = ? WHERE id = ?', ['Cancelled', order_id]);
-      await db.query('UPDATE shipments SET status = ? WHERE order_id = ?', ['Cancelled', order_id]);
-      return res.json({ success: true, message: 'Order cancelled locally' });
-    }
-
-    // Call Fship cancel API
-    const cancelPayload = { waybill: shipments[0].awb_code, reason: reason || 'Cancelled by customer' };
-    console.log("=== FSHIP REQUEST - CANCEL ORDER ===", JSON.stringify(cancelPayload, null, 2));
-
-    const fshipResponse = await axios.post(
-      `${FSHIP_BASE}/api/cancelorder`,
-      cancelPayload,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_STAGING_KEY
-        },
-        timeout: 15000
-      }
-    );
-
-    console.log("=== FSHIP RESPONSE - CANCEL ORDER ===", JSON.stringify(fshipResponse.data, null, 2));
-
-    if (fshipResponse.data.status === true) {
-      await db.query('UPDATE orders SET status = ? WHERE id = ?', ['Cancelled', order_id]);
-      await db.query('UPDATE shipments SET status = ? WHERE order_id = ?', ['Cancelled', order_id]);
-      res.json({ success: true, message: 'Shipment cancelled successfully' });
-    } else {
-      res.json({ success: false, message: fshipResponse.data.response || 'Could not cancel on Fship' });
-    }
-
-  } catch (err) {
-    console.error('Cancel error:', err.response?.data || err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
+// Cancellation route removed as requested. Customers are not allowed to cancel orders.
 
 
 // ──────────────────────────────────────────────
@@ -429,7 +381,7 @@ router.post('/status', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_STAGING_KEY
+          'signature': process.env.FSHIP_API_KEY
         },
         timeout: 15000
       }
@@ -563,7 +515,7 @@ router.post('/estimate-rate', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'signature': process.env.FSHIP_STAGING_KEY
+          'signature': process.env.FSHIP_API_KEY
         },
         timeout: 10000
       }
