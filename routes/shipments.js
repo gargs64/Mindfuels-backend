@@ -139,43 +139,6 @@ router.get('/test-fship', async (req, res) => {
 // 5. ESTIMATE SHIPPING RATE (called from cart page before checkout)
 // ──────────────────────────────────────────────
 
-// Realistic fallback shipping calculator (calibrated to match Fship rates)
-function calculateFallbackShipping(sourcePincode, destPincode, weightKg) {
-  const srcRegion = sourcePincode.substring(0, 1);
-  const dstRegion = destPincode.substring(0, 1);
-  const srcZone3 = sourcePincode.substring(0, 3);
-  const dstZone3 = destPincode.substring(0, 3);
-
-  let zone;
-  if (srcZone3 === dstZone3) {
-    zone = 'local';
-  } else if (srcRegion === dstRegion) {
-    zone = 'regional';
-  } else if (['1', '2', '3', '4', '5'].includes(dstRegion)) {
-    zone = 'national';
-  } else {
-    zone = 'remote';
-  }
-
-  const rates = {
-    local: { base: 26, perKg: 18 },   // ~₹35 for 0.5kg, ~₹44 for 1kg
-    regional: { base: 34, perKg: 22 }, // ~₹45 for 0.5kg, ~₹56 for 1kg
-    national: { base: 40, perKg: 48 }, // ~₹64 for 0.5kg, ~₹88 for 1kg
-    remote: { base: 55, perKg: 58 }    // ~₹84 for 0.5kg, ~₹113 for 1kg
-  };
-
-  const r = rates[zone];
-  const chargeableWeight = Math.max(weightKg, 0.5);
-  const shipping = Math.round(r.base + (r.perKg * chargeableWeight));
-
-  return {
-    shipping_charge: shipping,
-    courier_name: 'Standard Delivery',
-    service_mode: 'surface',
-    zone: zone
-  };
-}
-
 router.post('/estimate-rate', async (req, res) => {
   const { destination_pincode, items } = req.body;
 
@@ -258,8 +221,12 @@ router.post('/estimate-rate', async (req, res) => {
       });
     }
 
-    const fallback = calculateFallbackShipping(sourcePincode, destination_pincode, totalWeight);
-    return res.json({ success: true, ...fallback, all_rates: [], fallback: true });
+    // No rates found in Fship response
+    return res.status(502).json({ 
+      success: false, 
+      message: 'Fship API returned no shipping rates for this destination.',
+      fship_response: data 
+    });
 
   } catch (err) {
     console.error('=== FSHIP RATE CALCULATOR FAILURE ===');
@@ -270,15 +237,11 @@ router.post('/estimate-rate', async (req, res) => {
     }
     console.error('======================================');
 
-    const sourcePincode = process.env.FSHIP_SOURCE_PINCODE || '110034';
-    let totalWeight = 0;
-    (req.body.items || []).forEach(i => {
-      totalWeight += (parseFloat(i.weight) || 0.5) * (i.qty || i.quantity || 1);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch shipping rates from Fship.',
+      error: err.response?.data || err.message 
     });
-    if (totalWeight === 0) totalWeight = 0.5;
-
-    const fallback = calculateFallbackShipping(sourcePincode, destination_pincode, totalWeight);
-    return res.json({ success: true, ...fallback, all_rates: [], fallback: true });
   }
 });
 
