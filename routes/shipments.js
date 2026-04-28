@@ -8,6 +8,58 @@ const FSHIP_BASE = 'https://capi.fship.in'; // Production URL
 const FSHIP_STAGING_BASE = 'https://capi-qc.fship.in'; // Staging for testing
 
 // ── DIAGNOSTIC (no auth required) ──────────────
+router.get('/test-production-fship', async (req, res) => {
+  const results = {};
+  const apiKey = process.env.FSHIP_API_KEY;
+  const warehouseId = 258921; // Production warehouse ID
+  const headers = { 'Content-Type': 'application/json', 'signature': apiKey };
+
+  try {
+    const createPayload = {
+      customer_Name: "Production Test",
+      customer_Mobile: "9050334980",
+      customer_Emailid: "test@mindfuels.in",
+      customer_Address: "274, 2nd floor Rajdhani enclave, Pitampura",
+      customer_Address_Type: "Home",
+      customer_PinCode: "110034",
+      customer_City: "Delhi",
+      orderId: `PROD-TEST-${Date.now()}`,
+      invoice_Number: `INV-${Date.now()}`,
+      payment_Mode: 2, // Prepaid
+      express_TYPE: 'surface',
+      order_Amount: 1,
+      total_Amount: 1,
+      shipment_Weight: 0.5,
+      shipment_Length: 25,
+      shipment_Width: 18,
+      shipment_Height: 5,
+      pick_Address_ID: warehouseId,
+      return_Address_ID: warehouseId,
+      products: [{
+        productId: "PROD-TEST-1",
+        productName: "Production Test Book",
+        unitPrice: 1,
+        quantity: 1,
+        productCategory: 'Books',
+        hsnCode: '4901',
+        sku: "PROD-TEST-SKU"
+      }],
+      courierId: 0
+    };
+
+    results.payload = createPayload;
+    console.log("=== PROD TEST FSHIP PAYLOAD ===", JSON.stringify(createPayload, null, 2));
+
+    const response = await axios.post(`${FSHIP_BASE}/api/createforwardorder`, createPayload, { headers, timeout: 30000 });
+    results.response = response.data;
+    res.json(results);
+  } catch (err) {
+    results.error = err.message;
+    results.error_details = err.response?.data || "No additional details";
+    res.status(500).json(results);
+  }
+});
+
 // ── DIAGNOSTIC (no auth required) ──────────────
 router.get('/test-fship', async (req, res) => {
   const stagingKey = '085c36066064af83c66b9dbf44d190d40feec79f437bc1c1cb';
