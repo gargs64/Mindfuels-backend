@@ -262,7 +262,14 @@ router.post('/estimate-rate', async (req, res) => {
     return res.json({ success: true, ...fallback, all_rates: [], fallback: true });
 
   } catch (err) {
-    console.error('[FSHIP RATE] API error:', err.message);
+    console.error('=== FSHIP RATE CALCULATOR FAILURE ===');
+    console.error('Status:', err.response?.status || 'N/A');
+    console.error('Message:', err.message);
+    if (err.response && err.response.data) {
+      console.error('Fship Error Response:', JSON.stringify(err.response.data, null, 2));
+    }
+    console.error('======================================');
+
     const sourcePincode = process.env.FSHIP_SOURCE_PINCODE || '110034';
     let totalWeight = 0;
     (req.body.items || []).forEach(i => {
