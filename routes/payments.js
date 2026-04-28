@@ -69,8 +69,12 @@ router.post('/verify', checkJwt, async (req, res) => {
     res.json({ success: true, message: 'Payment verified successfully' });
 
   } catch (err) {
-    console.error('Payment verify error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('CRITICAL PAYMENT VERIFY ERROR:', err);
+    res.status(500).json({ 
+      success: false,
+      message: err.message || err.toString() || 'Unknown payment verification error',
+      error: err.message || err.toString() || 'Unknown payment verification error' 
+    });
   }
 });
 

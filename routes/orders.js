@@ -10,6 +10,9 @@ router.use(checkJwt);
 
 // CREATE ORDER (call this after payment verified)
 router.post('/', async (req, res) => {
+  console.log("=== CREATE ORDER REQUEST RECEIVED ===");
+  console.log("Payload:", JSON.stringify(req.body, null, 2));
+
   const auth0Id = req.auth.sub;
   const {
     grand_total,
@@ -125,10 +128,31 @@ router.post('/', async (req, res) => {
     const orderItemsValues = orderItems.map(item => [
       orderId, item.product_id, item.quantity, item.price, item.weight, item.length, item.width, item.height
     ]);
-    await db.query(
-      'INSERT INTO order_items (order_id, product_id, quantity, price, weight, length, width, height) VALUES ?',
-      [orderItemsValues]
-    );
+
+    if (!orderItemsValues || orderItemsValues.length === 0) {
+      throw new Error("No items found in order to save.");
+    }
+
+    try {
+      await db.query(
+        'INSERT INTO order_items (order_id, product_id, quantity, price, weight, length, width, height) VALUES ?',
+        [orderItemsValues]
+      );
+    } catch (oiErr) {
+      console.error('Order Items Insertion Failed. Check if weight/length/width/height columns exist in order_items table.');
+      console.error('SQL Error:', oiErr.sqlMessage || oiErr.message);
+      // Fallback: try inserting without dimensions if they are missing from DB
+      if (oiErr.code === 'ER_BAD_FIELD_ERROR') {
+        console.log('Retrying order_items insert without dimensions...');
+        const simplifiedValues = orderItems.map(item => [orderId, item.product_id, item.quantity, item.price]);
+        await db.query(
+          'INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?',
+          [simplifiedValues]
+        );
+      } else {
+        throw oiErr;
+      }
+    }
 
     // 6. Clear cart completely
     await db.query('DELETE FROM cart WHERE user_id = ?', [userId]);
@@ -195,8 +219,14 @@ router.post('/', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Order error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('CRITICAL ORDER ERROR:', err);
+    if (err.sqlMessage) console.error('SQL Message:', err.sqlMessage);
+    
+    res.status(500).json({ 
+      success: false,
+      message: err.message || err.toString() || 'Unknown order recording error',
+      error: err.sqlMessage || err.message || err.toString() 
+    });
   }
 });
 
