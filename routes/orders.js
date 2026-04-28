@@ -124,6 +124,19 @@ router.post('/', async (req, res) => {
     );
     const orderId = orderResult.insertId;
 
+    // 4.5 Save detailed payment record to payments table
+    try {
+      await db.query(`
+        INSERT INTO payments
+          (order_id, razorpay_order_id, razorpay_payment_id, razorpay_signature, amount, status, paid_at)
+        VALUES (?, ?, ?, ?, ?, 'paid', NOW())
+      `, [orderId, payment_order_id, payment_id, payment_signature, grandTotal]);
+      console.log('Payment verified and saved to payments table for Order:', orderId);
+    } catch (payErr) {
+      console.error('Non-blocking Payment Record Error:', payErr.sqlMessage || payErr.message);
+      // We don't throw here to avoid failing the whole order if only the payment log fails
+    }
+
     // 5. Save order items — ONLY the items the user actually ordered
     const orderItemsValues = orderItems.map(item => [
       orderId, item.product_id, item.quantity, item.price, item.weight, item.length, item.width, item.height
