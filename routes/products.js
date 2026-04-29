@@ -27,7 +27,6 @@ router.get('/', async (req, res) => {
         stock: p.stock_qty,
         tags: tags,
         images: [p.image1, p.image2, p.image3, p.image4, p.image5, p.image6, p.image7].filter(img => img),
-        sales: p.sales || 100,
         length: p.length || '',
         subject: p.tag1 || '',
         interest: p.tag2 || '',
@@ -100,19 +99,19 @@ router.post('/sync', async (req, res) => {
       try {
         await db.query(`
           INSERT INTO products (
-            product_id, title, sp, mrp, description, stock_qty, 
-            tag1, tag2, tag3, image1, image2, image3, image4, image5, image6, image7, 
-            sales, length
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            product_id, title, tag1, tag2, tag3, mrp, sp, stock_qty, description, 
+            image1, image2, image3, image4, image5, image6, image7, 
+            weight, length, width, height
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE
             title = VALUES(title),
-            sp = VALUES(sp),
-            mrp = VALUES(mrp),
-            description = VALUES(description),
-            stock_qty = VALUES(stock_qty),
             tag1 = VALUES(tag1),
             tag2 = VALUES(tag2),
             tag3 = VALUES(tag3),
+            mrp = VALUES(mrp),
+            sp = VALUES(sp),
+            stock_qty = VALUES(stock_qty),
+            description = VALUES(description),
             image1 = VALUES(image1),
             image2 = VALUES(image2),
             image3 = VALUES(image3),
@@ -120,13 +119,14 @@ router.post('/sync', async (req, res) => {
             image5 = VALUES(image5),
             image6 = VALUES(image6),
             image7 = VALUES(image7),
-            sales = VALUES(sales),
-            length = VALUES(length)
+            weight = VALUES(weight),
+            length = VALUES(length),
+            width = VALUES(width),
+            height = VALUES(height)
         `, [
-          p.product_id, p.title, p.sp || 0, p.mrp || 0, p.description || '', p.stock_qty || 0,
-          p.tag1 || '', p.tag2 || '', p.tag3 || '',
+          p.product_id, p.title, p.tag1 || '', p.tag2 || '', p.tag3 || '', p.mrp || 0, p.sp || 0, p.stock_qty || 0, p.description || '',
           p.image1 || '', p.image2 || '', p.image3 || '', p.image4 || '', p.image5 || '', p.image6 || '', p.image7 || '',
-          p.sales || 100, p.length || ''
+          p.weight || 0, p.length || 0, p.width || 0, p.height || 0
         ]);
         successCount++;
       } catch (dbErr) {
