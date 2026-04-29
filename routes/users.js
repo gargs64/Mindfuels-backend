@@ -11,24 +11,24 @@ router.post('/sync', checkJwt, async (req, res) => {
   try {
     // Upsert logic
     const [existing] = await db.query('SELECT id FROM users WHERE auth0_id = ?', [auth0Id]);
-    
+
     if (existing.length > 0) {
       // Update existing user — only update phone if provided
       if (phone) {
-        await db.query('UPDATE users SET name = ?, email = ?, phone = ? WHERE auth0_id = ?', 
+        await db.query('UPDATE users SET name = ?, email = ?, phone = ? WHERE auth0_id = ?',
           [name, email, phone, auth0Id]);
       } else {
-        await db.query('UPDATE users SET name = ?, email = ? WHERE auth0_id = ?', 
+        await db.query('UPDATE users SET name = ?, email = ? WHERE auth0_id = ?',
           [name, email, auth0Id]);
       }
     } else {
       // Insert new user
       await db.query(
-        'INSERT INTO users (auth0_id, name, email, phone) VALUES (?, ?, ?, ?)', 
+        'INSERT INTO users (auth0_id, name, email, phone) VALUES (?, ?, ?, ?)',
         [auth0Id, name, email, phone || null]
       );
     }
-    
+
     res.json({ message: 'User synced successfully' });
   } catch (err) {
     console.error('User sync error:', err);

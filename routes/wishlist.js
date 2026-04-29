@@ -10,7 +10,7 @@ router.use(checkJwt);
 router.post('/', async (req, res) => {
     const auth0Id = req.auth.sub;
     const { product_id } = req.body;
-    
+
     console.log(`[Wishlist] Add attempt - User: ${auth0Id}, Product: ${product_id}`);
 
     try {
@@ -26,7 +26,7 @@ router.post('/', async (req, res) => {
             'INSERT INTO wishlist (user_id, product_id, added_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE added_at = CURRENT_TIMESTAMP',
             [userId, product_id]
         );
-        
+
         console.log(`[Wishlist] Successfully added ${product_id} for user ${userId}`);
         res.json({ message: 'Added to wishlist' });
     } catch (err) {

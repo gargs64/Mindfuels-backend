@@ -37,11 +37,11 @@ router.get('/', async (req, res) => {
         searchTags: [p.title, p.description, p.tag1, p.tag2, p.tag3].filter(Boolean).join(' ').toLowerCase()
       };
     });
-    
+
     // Update cache
     cachedProducts = products;
     lastFetchTime = now;
-    
+
     // Send response with caching headers
     res.set('Cache-Control', 'public, max-age=300'); // Cache in browser for 5 mins
     res.json(products);
@@ -55,7 +55,7 @@ router.get('/:id', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM products WHERE product_id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ message: 'Product not found' });
-    
+
     const p = rows[0];
     res.json({
       id: p.product_id,
