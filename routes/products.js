@@ -27,7 +27,6 @@ router.get('/', async (req, res) => {
         stock: p.stock_qty,
         tags: tags,
         images: [p.image1, p.image2, p.image3, p.image4, p.image5, p.image6, p.image7].filter(img => img),
-        rating: p.rating || '4.5',
         sales: p.sales || 100,
         length: p.length || '',
         subject: p.tag1 || '',
@@ -65,7 +64,6 @@ router.get('/:id', async (req, res) => {
       description: p.description || '',
       stock: p.stock_qty,
       images: [p.image1, p.image2, p.image3, p.image4, p.image5, p.image6, p.image7].filter(img => img),
-      rating: p.rating || '4.5',
       subject: p.tag1 || '',
       interest: p.tag2 || '',
       ageGroup: p.tag3 || ''
@@ -104,8 +102,8 @@ router.post('/sync', async (req, res) => {
           INSERT INTO products (
             product_id, title, sp, mrp, description, stock_qty, 
             tag1, tag2, tag3, image1, image2, image3, image4, image5, image6, image7, 
-            rating, sales, length
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            sales, length
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE
             title = VALUES(title),
             sp = VALUES(sp),
@@ -122,14 +120,13 @@ router.post('/sync', async (req, res) => {
             image5 = VALUES(image5),
             image6 = VALUES(image6),
             image7 = VALUES(image7),
-            rating = VALUES(rating),
             sales = VALUES(sales),
             length = VALUES(length)
         `, [
           p.product_id, p.title, p.sp || 0, p.mrp || 0, p.description || '', p.stock_qty || 0,
           p.tag1 || '', p.tag2 || '', p.tag3 || '',
           p.image1 || '', p.image2 || '', p.image3 || '', p.image4 || '', p.image5 || '', p.image6 || '', p.image7 || '',
-          p.rating || '4.5', p.sales || 100, p.length || ''
+          p.sales || 100, p.length || ''
         ]);
         successCount++;
       } catch (dbErr) {
