@@ -402,6 +402,9 @@ router.post('/create', async (req, res) => {
     };
 
     // 4. Call Fship API
+    console.log('PRODUCTION FSHIP PAYLOAD:', JSON.stringify(fshipPayload, null, 2));
+    console.log('FSHIP PRODUCTION KEY EXISTS:', !!process.env.FSHIP_API_KEY);
+    console.log('PICKUP ADDRESS ID:', process.env.FSHIP_PICKUP_ADDRESS_ID);
     console.log("=== FSHIP REQUEST - CREATE ORDER ===", JSON.stringify(fshipPayload, null, 2));
     const fshipResponse = await axios.post(
       `${FSHIP_BASE}/api/createforwardorder`,
