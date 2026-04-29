@@ -75,4 +75,82 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// POST sync products (called by Google Apps Script or external services)
+router.post('/sync', async (req, res) => {
+  try {
+    const secret = req.headers['x-secret'];
+    if (secret !== 'mindfuelssecretkey') {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { products } = req.body;
+    if (!products || !Array.isArray(products)) {
+      return res.status(400).json({ error: 'Invalid payload. Expected { products: [...] }' });
+    }
+
+    let successCount = 0;
+    let failureCount = 0;
+    const errors = [];
+
+    for (const p of products) {
+      if (!p.product_id || !p.title) {
+        failureCount++;
+        errors.push(`Missing required fields for product: ${JSON.stringify(p)}`);
+        continue;
+      }
+
+      try {
+        await db.query(`
+          INSERT INTO products (
+            product_id, title, sp, mrp, description, stock_qty, 
+            tag1, tag2, tag3, image1, image2, image3, image4, image5, image6, image7, 
+            rating, sales, length
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            title = VALUES(title),
+            sp = VALUES(sp),
+            mrp = VALUES(mrp),
+            description = VALUES(description),
+            stock_qty = VALUES(stock_qty),
+            tag1 = VALUES(tag1),
+            tag2 = VALUES(tag2),
+            tag3 = VALUES(tag3),
+            image1 = VALUES(image1),
+            image2 = VALUES(image2),
+            image3 = VALUES(image3),
+            image4 = VALUES(image4),
+            image5 = VALUES(image5),
+            image6 = VALUES(image6),
+            image7 = VALUES(image7),
+            rating = VALUES(rating),
+            sales = VALUES(sales),
+            length = VALUES(length)
+        `, [
+          p.product_id, p.title, p.sp || 0, p.mrp || 0, p.description || '', p.stock_qty || 0,
+          p.tag1 || '', p.tag2 || '', p.tag3 || '',
+          p.image1 || '', p.image2 || '', p.image3 || '', p.image4 || '', p.image5 || '', p.image6 || '', p.image7 || '',
+          p.rating || '4.5', p.sales || 100, p.length || ''
+        ]);
+        successCount++;
+      } catch (dbErr) {
+        failureCount++;
+        errors.push(`Failed to insert/update ${p.product_id}: ${dbErr.message}`);
+      }
+    }
+
+    // Clear cache since products have changed
+    cachedProducts = null;
+    lastFetchTime = 0;
+
+    res.json({
+      message: 'Sync complete',
+      successCount,
+      failureCount,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
