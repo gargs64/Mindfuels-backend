@@ -76,7 +76,7 @@ router.get('/:id', async (req, res) => {
 router.post('/sync', async (req, res) => {
   try {
     const secret = req.headers['x-secret'];
-    if (secret !== 'mindfuelssecretkey') {
+    if (secret !== (process.env.SYNC_SECRET || 'mindfuelssecretkey')) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
@@ -90,7 +90,7 @@ router.post('/sync', async (req, res) => {
     const errors = [];
 
     for (const p of products) {
-      if (successCount === 0) console.log('First product payload sample:', JSON.stringify(p, null, 2));
+
       if (!p.product_id || !p.title) {
         failureCount++;
         errors.push(`Missing required fields for product: ${JSON.stringify(p)}`);
