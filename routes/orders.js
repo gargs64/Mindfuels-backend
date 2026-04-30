@@ -36,6 +36,17 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ message: "Invalid payment signature" });
   }
 
+  // Prevent duplicate orders — if this payment_id was already used, reject
+  const [existingOrder] = await db.query('SELECT id FROM orders WHERE payment_id = ?', [payment_id]);
+  if (existingOrder.length > 0) {
+    return res.status(409).json({ 
+      success: false, 
+      message: 'Order already exists for this payment',
+      orderId: existingOrder[0].id,
+      displayId: `#ORD-${9900 + existingOrder[0].id}`
+    });
+  }
+
   // 0. Setup Nodemailer Transporter
   const transporter = nodemailer.createTransport({
     service: 'gmail',
