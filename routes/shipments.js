@@ -180,9 +180,11 @@ router.post('/create', async (req, res) => {
     const [orders] = await db.query(`
       SELECT o.id, o.total_amount, o.payment_id,
              sa.full_name, sa.phone, sa.address_line1, sa.address_line2, 
-             sa.city, sa.state, sa.pincode
+             sa.city, sa.state, sa.pincode,
+             u.email as user_email
       FROM orders o
       JOIN shipping_address sa ON o.address_id = sa.id
+      JOIN users u ON o.user_id = u.id
       WHERE o.id = ?
     `, [order_id]);
 
@@ -225,7 +227,7 @@ router.post('/create', async (req, res) => {
     const fshipPayload = {
       customer_Name: order.full_name,
       customer_Mobile: order.phone,
-      customer_Emailid: '',
+      customer_Emailid: order.user_email || 'orders@mindfuelspublisher.com',
       customer_Address: order.address_line1 + (order.address_line2 ? ', ' + order.address_line2 : ''),
       landMark: order.address_line2 || '',
       customer_Address_Type: 'Home',
